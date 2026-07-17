@@ -1,0 +1,20 @@
+# Rust
+target/
+Cargo.lock.bak
+
+
+# Uneven Agent
+.uneven/
+.uneven/
+uneven/
+/snapshots/
+*.log.md
+
+
+
+# Misc
+# .github/
+.env
+.tmp
+*.tmp
+

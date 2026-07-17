@@ -1,0 +1,44 @@
+Business Source License 1.1
+
+Licensor:             Kreive Tech
+Licensed Work:        Uneven Agent
+Additional Use Grant: Personal, educational and non-commercial use is free.
+Change Date:          2056-04-19
+Change License:       Apache License 2.0
+
+Use Limitation: Production commercial use — including SaaS products,
+paid services, internal company use and client projects — requires
+a commercial license from Kreive Tech.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+For questions about commercial licensing, please contact:
+contact@kreive.com.br
+
+---
+
+Uneven Agent's "Snatchy" agent is powered by Llama 3.2. Llama 3.2 is licensed under the Llama 3.2 Community License, Copyright © Meta Platforms, Inc. All Rights Reserved.
+
+---
+
+BUSINESS SOURCE LICENSE 1.1 SUMMARY:
+
+What's free?
+✅ Personal projects
+✅ Learning and studying the code
+✅ Non-commercial forks
+✅ Contributing to the project
+
+What requires a license?
+❌ Commercial production use (SaaS, paid services, internal company use)
+
+Automatic conversion:
+- On 2056-04-19, this license converts to Apache 2.0
+- At that point, all commercial uses become freely allowed

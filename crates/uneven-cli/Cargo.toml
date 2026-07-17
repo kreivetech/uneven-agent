@@ -1,0 +1,48 @@
+[package]
+name = "uneven-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+uneven-core = { path = "../uneven-core" }
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4.5", features = ["derive", "env"] }
+indicatif = "0.17"
+console = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+reqwest = { version = "0.13", features = ["json", "stream"] }
+obfstr = "0.4"
+futures = "0.3"
+regex = "1"
+chrono = { version = "0.4", features = ["serde"] }
+walkdir = "2.5"
+uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
+sha2 = "0.10"
+libc = "0.2"
+rustls = "0.23"
+tokio-rustls = "0.26"
+rustls-pemfile = "2.1"
+dotenvy = "0.15.7"
+rustyline = "14.0.0"
+
+[[bin]]
+name = "uneven"
+path = "src/main.rs"
+
+[features]
+default = []
+cuda = ["uneven-core/cuda"]
+metal = ["uneven-core/metal"]
+mkl = ["uneven-core/mkl"]
+accelerate = ["uneven-core/accelerate"]
+
+[dev-dependencies]
+tempfile = "3"
+
+

@@ -1,0 +1,74 @@
+pub fn build_analysis_prompt(schema_text: &str) -> String {
+    format!(
+        "You are a data analyst. Based on the following database schema, suggest exactly 5 concise analysis questions a business user would find valuable.\n\n\
+         Schema:\n\
+         {}\n\n\
+         STRICT OUTPUT FORMAT:\n\
+         Respond ONLY with the suggestions wrapped in the following tag. Each suggestion on its own line, starting with \"•\". No conversational filler.\n\n\
+         <suggestions>\n\
+         • Suggestion 1\n\
+         • Suggestion 2\n\
+         ...\n\
+         </suggestions>",
+        schema_text
+    ).trim().to_string()
+}
+
+pub fn build_sql_gen_prompt(
+    db_type: Option<&str>,
+    schema_text: &str,
+    user_request: &str,
+    prompt_rules: &str,
+) -> String {
+    format!(
+        "You are an expert SQL analyst. Generate a SELECT query for the following request.\n\n\
+         Database type: {}\n\n\
+         Schema (sensitive columns have already been removed — do not reference any column not listed here). \n\
+         Note: Each table includes a \"SAMPLE\" string showing a real row behavior (col=val|col=val) to help you understand the data format and content:\n\
+         {}\n\n\
+         User request: \"{}\"\n\n\
+         {}\n\n\
+         Additional rules:\n\
+         - ONLY generate SELECT statements. Never INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE or any DDL/DML.\n\
+         - Use ONLY the tables and columns listed in the schema above. Use EXACT case-sensitive names if provided.\n\
+         - If the request is ambiguous, make reasonable assumptions and note them.\n\
+         - If you cannot generate a valid query for this schema, respond with exactly: CANNOT_GENERATE followed by a one-sentence explanation.\n\
+         - If the request violates any SECURITY RULE, respond with exactly: SECURITY_BLOCKED\n\n\
+         STRICT OUTPUT FORMAT:\n\
+         You MUST format your response as follows. Do NOT write any conversational text outside these sections.\n\n\
+         [Your valid SQL query here]\n\n\
+         VISUAL:\n\
+         title=<Report Title> | layout=[{{ \"type\": \"card\", \"config\": {{ \"title\": \"Total Users\", \"metricCol\": \"count\", \"icon\": \"users\", \"colSpan\": 3 }} }}, {{ \"type\": \"chart\", \"config\": {{ \"chartType\": \"bar\", \"title\": \"Salaries by Dept\", \"labelCol\": \"dept_name\", \"valueCols\": [\"total_salary\"], \"colSpan\": 9, \"height\": 300 }} }}] | colors=<#primary,#accent,#bg,#text>\n\n\
+         EXPLANATION:\n\
+         A very brief technical explanation (one sentence).\n\n\
+         REPORT:\n\
+         A high-level executive report of what this query will uncover.\n\n\
+         - VISUALS RULE: ALWAYS use the exact column names from your SQL query in \"metricCol\", \"labelCol\", and \"valueCols\".\n\
+         - COLOR RULE: Translate user style requests into hex codes: [primary, accent, background, text].\n\
+         - Standard Executive Window: 12 columns width. Use \"colSpan\" (1-12) to balance the grid.\n\
+         - Bento Grid aesthetic: Mix small cards (colSpan 3, height 120), charts (colSpan 6-9, height 300), and tables (type: \"table\", colSpan 12).",
+        db_type.unwrap_or("SQL"),
+        schema_text,
+        user_request,
+        prompt_rules
+    ).trim().to_string()
+}
+
+pub fn build_style_extraction_prompt(user_style_prompt: &str, columns: &[String]) -> String {
+    format!(
+        "You are the Lead Architect for a BI Dashboard. Translate the following user style request into dashboard configuration.\n\n\
+         User request: \"{}\"\n\n\
+         Available Data Columns from the executed query: {}\n\n\
+         STRICT OUTPUT FORMAT:\n\
+         You MUST format your response as follows. Do NOT write any conversational text.\n\n\
+         VISUAL:\n\
+         title=<Report Title> | theme=<dark|light> | layout=[{{ \"type\": \"card\", \"config\": {{ \"title\": \"Total Users\", \"metricCol\": \"count\", \"icon\": \"users\", \"colSpan\": 3 }} }}, {{ \"type\": \"chart\", \"config\": {{ \"chartType\": \"bar\", \"title\": \"Salaries by Dept\", \"labelCol\": \"dept_name\", \"valueCols\": [\"total_salary\"], \"colSpan\": 9, \"height\": 300 }} }}] | colors=<#primary,#accent,#bg,#text>\n\n\
+         - ALWAYS use the exact column names from the Available Data Columns list in \"metricCol\", \"labelCol\", and \"valueCols\".\n\
+         - COLOR RULE: Translate user style requests into a list of hex codes. The order MUST be: [primary, accent, background, text]. If the user doesn't specify background/text, provide only [primary, accent]. These colors define the GLOBAL theme via CSS variables.\n\
+         - CHART RULE: Prioritize user-requested components (e.g. \"2 cards, 1 bars\").\n\
+         - Standard Executive Window: 12 columns width. Use \"colSpan\" (1-12) to balance the grid.\n\
+         - Bento Grid aesthetic: Mix small cards (colSpan 3, height 120), charts (colSpan 6-9, height 300), and tables (type: \"table\", colSpan 12).",
+        user_style_prompt,
+        columns.join(", ")
+    ).trim().to_string()
+}
