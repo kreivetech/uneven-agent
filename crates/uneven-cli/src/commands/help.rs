@@ -55,8 +55,7 @@ pub async fn run() -> Result<()> {
     println!("{}", d("    --skip-large                   Automatically skip files exceeding limit"));
     println!("{}", d("    --max-file-size <mb>           Specify maximum indexable file size (default: 2MB)"));
     println!("{}", w("chat", "Start a direct, raw chat session with the AI brain"));
-    println!("{}", w("ask \"<question>\"", "Ask plain English questions about your code"));
-    println!("{}", w("askf \"<task>\"", "Instruct Uneven to surgically write, edit or create files"));
+    println!("{}", w("ask \"<task or question>\"", "Deep reasoning, code investigation, and pre-flight implementation planning"));
     println!("{}", w("docs <file> [symbol]", "Generate Markdown or JSDoc documentation for code symbols"));
     println!("{}", d("    --format md|jsdoc              Choose output format (default: md)"));
     println!("{}", d("    --out <path>                   Save generated documentation to specific file"));
@@ -99,14 +98,6 @@ pub async fn run() -> Result<()> {
     println!("{}", d("    --strict-security              Fail CI if any medium severity leak is detected"));
     println!("{}", d("    -o, --output <path>            Write structured JSON build summary to file"));
     println!("{}", d("    --github                       Enable GitHub Actions inline annotation format"));
-    println!("{}", w("review", "Run automated code review on current git diff or commit"));
-    println!("{}", d("    --from <ref>                   Compare current HEAD against git branch/ref"));
-    println!("{}", d("    --base <branch>                Compare branch/ref divergence against a base branch"));
-    println!("{}", d("    --commit <hash>                Review a specific past commit"));
-    println!("{}", d("    --staged                       Perform code review on staged changes only"));
-    println!("{}", d("    -r, --report                   Export full review summary to Markdown"));
-    println!("{}", d("    --context <text>               Provide additional prompt guidelines for review"));
-    println!("{}", d("    [paths]...                     Files or directories to review (optional)"));
 
     print_section(&format!("Team Plan Commands  {}", t("◈ Team")));
     println!("{}", w("pentest", "Perform automated static/active pentesting over code & db (2 static scans/6h limit on Free, active requires Team)"));

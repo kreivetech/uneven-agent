@@ -1,12 +1,13 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use catfive::{schema, string, number, Validator};
 use console::style;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command as SysCommand;
 use std::time::Duration;
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use sha2::{Sha256, Digest};
 
 // API_BASE is now obfuscated inline
 const GRACE_EXTENSION_DAYS: i64 = 7;
@@ -17,9 +18,9 @@ pub struct LicenseCache {
     pub key: String,
     pub tier: String, // "pro" | "team"
     pub seats: usize,
-    pub expires_at: i64,       // Unix timestamp, 0 = no expiry
-    pub verified_at: i64,      // Unix timestamp of last successful server check
-    pub grace_until: i64,      // Unix timestamp grace period deadline
+    pub expires_at: i64,  // Unix timestamp, 0 = no expiry
+    pub verified_at: i64, // Unix timestamp of last successful server check
+    pub grace_until: i64, // Unix timestamp grace period deadline
     pub machine_id: String,
 }
 
@@ -106,7 +107,12 @@ pub fn get_machine_id() -> String {
 }
 
 pub fn get_machine_label() -> String {
-    format!("{}-{} / {}", get_node_platform(), get_node_arch(), get_hostname())
+    format!(
+        "{}-{} / {}",
+        get_node_platform(),
+        get_node_arch(),
+        get_hostname()
+    )
 }
 
 // ─── Cache Storage ───────────────────────────────────────────────────────────
@@ -149,39 +155,46 @@ pub fn clear_license() {
 // ─── Key Verification ────────────────────────────────────────────────────────
 
 pub fn parse_key(key: &str) -> Result<KeyPayload, &'static str> {
-    let parts: Vec<&str> = key.split('-').collect();
-    if parts.len() < 4 || parts[0] != "UNVN" {
+    if string().starts_with("UNVN-").validate(key).is_err() {
         return Err("malformed");
     }
-    
+
+    let parts: Vec<&str> = key.split('-').collect();
+    if parts.len() < 4 {
+        return Err("malformed");
+    }
+
     let payload_b64 = parts[2..parts.len() - 1].join("-");
-    
+
     let bytes = match URL_SAFE_NO_PAD.decode(&payload_b64) {
         Ok(b) => b,
-        Err(_) => {
-            match base64::engine::general_purpose::URL_SAFE.decode(&payload_b64) {
-                Ok(b) => b,
-                Err(_) => return Err("malformed"),
-            }
-        }
+        Err(_) => match base64::engine::general_purpose::URL_SAFE.decode(&payload_b64) {
+            Ok(b) => b,
+            Err(_) => return Err("malformed"),
+        },
     };
-        
+
     let payload_str = String::from_utf8(bytes).map_err(|_| "malformed")?;
     let payload: KeyPayload = serde_json::from_str(&payload_str).map_err(|_| "malformed")?;
-    
-    if payload.id.is_empty() || payload.seats < 1 {
+
+    let payload_validator = schema::<KeyPayload>()
+        .field("id", |p| &p.id, string().min(1))
+        .field("tier", |p| &p.tier, string().in_list(&["pro", "team"]))
+        .field("seats", |p| &p.seats, number().min(1));
+
+    if let Err(errs) = payload_validator.validate(&payload) {
+        let err_str = format!("{:?}", errs);
+        if err_str.contains("tier") {
+            return Err("unknown_tier");
+        }
         return Err("malformed");
     }
-    
-    if payload.tier != "pro" && payload.tier != "team" {
-        return Err("unknown_tier");
-    }
-    
+
     let now = chrono::Utc::now().timestamp();
     if payload.expires > 0 && payload.expires < now {
         return Err("expired");
     }
-    
+
     Ok(payload)
 }
 
@@ -190,7 +203,8 @@ pub fn parse_key(key: &str) -> Result<KeyPayload, &'static str> {
 pub fn check_pro() -> bool {
     if let Some(license) = read_license() {
         let now = chrono::Utc::now().timestamp();
-        let active = license.expires_at == 0 || now < license.expires_at || now < license.grace_until;
+        let active =
+            license.expires_at == 0 || now < license.expires_at || now < license.grace_until;
         active && (license.tier == "pro" || license.tier == "team")
     } else {
         false
@@ -209,7 +223,8 @@ pub fn require_pro() -> Result<()> {
 pub fn check_team() -> bool {
     if let Some(license) = read_license() {
         let now = chrono::Utc::now().timestamp();
-        let active = license.expires_at == 0 || now < license.expires_at || now < license.grace_until;
+        let active =
+            license.expires_at == 0 || now < license.expires_at || now < license.grace_until;
         active && license.tier == "team"
     } else {
         false
@@ -229,7 +244,7 @@ pub fn require_team() -> Result<()> {
 
 pub async fn run_activate(key: String) -> Result<()> {
     let key = key.trim();
-    
+
     let parsed = match parse_key(key) {
         Ok(p) => p,
         Err(err) => {
@@ -249,7 +264,11 @@ pub async fn run_activate(key: String) -> Result<()> {
         .timeout(Duration::from_secs(10))
         .build()?;
 
-    let res = client.post(format!("{}/license/activate", obfstr::obfstr!("https://api.uneven.dev")))
+    let res = client
+        .post(format!(
+            "{}/license/activate",
+            obfstr::obfstr!("https://api.uneven.dev")
+        ))
         .json(&serde_json::json!({
             "key": key,
             "machineId": machine_id,
@@ -261,11 +280,15 @@ pub async fn run_activate(key: String) -> Result<()> {
     let response = match res {
         Ok(r) => r,
         Err(_) => {
-            return Err(anyhow!("[UE-03000001] Could not reach license server. Check your connection."));
+            return Err(anyhow!(
+                "[UE-03000001] Could not reach license server. Check your connection."
+            ));
         }
     };
 
-    let data: ServerActivationResult = response.json().await
+    let data: ServerActivationResult = response
+        .json()
+        .await
         .map_err(|e| anyhow!("Activation failed: invalid response schema ({}).", e))?;
 
     if !data.valid {
@@ -274,17 +297,25 @@ pub async fn run_activate(key: String) -> Result<()> {
             "not_found" => "Key not found. Check for typos or contact support.",
             "revoked" => "This license has been revoked.",
             "expired" => "This license has expired.",
-            "seat_limit" => data.message.as_deref().unwrap_or("Machine limit reached. Deactivate another machine first."),
+            "seat_limit" => data
+                .message
+                .as_deref()
+                .unwrap_or("Machine limit reached. Deactivate another machine first."),
             _ => "Activation failed.",
         };
         return Err(anyhow!("[UE-02000001] {}", msg));
     }
 
-    let tier = data.tier.ok_or_else(|| anyhow!("Server did not return a license tier"))?;
+    let tier = data
+        .tier
+        .ok_or_else(|| anyhow!("Server did not return a license tier"))?;
     let seats = data.seats.unwrap_or(1);
-    
+
     if tier != "pro" && tier != "team" {
-        return Err(anyhow!("Activation failed: unexpected tier '{}' from server.", tier));
+        return Err(anyhow!(
+            "Activation failed: unexpected tier '{}' from server.",
+            tier
+        ));
     }
 
     let now = chrono::Utc::now().timestamp();
@@ -303,7 +334,12 @@ pub async fn run_activate(key: String) -> Result<()> {
     println!(
         "\n  {} {}\n",
         style("✓").green().bold(),
-        style(format!("License activated. Tier: {} · {} machine(s).", tier.to_uppercase(), seats)).bold()
+        style(format!(
+            "License activated. Tier: {} · {} machine(s).",
+            tier.to_uppercase(),
+            seats
+        ))
+        .bold()
     );
 
     Ok(())
@@ -312,8 +348,9 @@ pub async fn run_activate(key: String) -> Result<()> {
 pub async fn run_status() -> Result<()> {
     if let Some(license) = read_license() {
         let now = chrono::Utc::now().timestamp();
-        let active = license.expires_at == 0 || now < license.expires_at || now < license.grace_until;
-        
+        let active =
+            license.expires_at == 0 || now < license.expires_at || now < license.grace_until;
+
         let status_str = if active {
             style("ACTIVE").green().bold()
         } else {
@@ -324,9 +361,12 @@ pub async fn run_status() -> Result<()> {
         println!("  {}", style("Uneven License Status").bold());
         println!("  {}", style("─".repeat(40)).dim());
         println!("  Status     : {}", status_str);
-        println!("  Tier       : {}", style(license.tier.to_uppercase()).color256(208).bold());
+        println!(
+            "  Tier       : {}",
+            style(license.tier.to_uppercase()).color256(208).bold()
+        );
         println!("  Seats      : {}", license.seats);
-        
+
         if license.expires_at == 0 {
             println!("  Expires    : Never");
         } else {
@@ -354,14 +394,18 @@ pub async fn run_deactivate() -> Result<()> {
             .timeout(Duration::from_secs(8))
             .build()?;
 
-        let _ = client.post(format!("{}/license/deactivate", obfstr::obfstr!("https://api.uneven.dev")))
+        let _ = client
+            .post(format!(
+                "{}/license/deactivate",
+                obfstr::obfstr!("https://api.uneven.dev")
+            ))
             .json(&serde_json::json!({
                 "key": cached.key,
                 "machineId": cached.machine_id,
             }))
             .send()
             .await;
-            
+
         clear_license();
         println!(
             "\n  {} {}\n",
@@ -441,7 +485,10 @@ pub fn check_session_limit(command: &str, max_queries: usize, window_secs: i64) 
     let now = chrono::Utc::now().timestamp();
     let limit_boundary = now - window_secs;
 
-    let timestamps = usage.session_timestamps.entry(command.to_string()).or_default();
+    let timestamps = usage
+        .session_timestamps
+        .entry(command.to_string())
+        .or_default();
     timestamps.retain(|&t| t > limit_boundary);
 
     if timestamps.len() >= max_queries {
@@ -484,9 +531,7 @@ pub fn check_and_increment_usage(command: &str) -> Result<usize> {
             usage.analyze_count += 1;
             usage.analyze_count
         }
-        "askf" => {
-            0
-        }
+        "askf" => 0,
         _ => return Err(anyhow!("Unknown command for limit check: {}", command)),
     };
 
@@ -504,7 +549,7 @@ mod tests {
         // Run test 1: usage limits
         {
             let temp = tempdir().unwrap();
-            std::env::set_var("UNEVEN_TEST_HOME", temp.path());
+            unsafe { std::env::set_var("UNEVEN_TEST_HOME", temp.path()) };
 
             assert!(read_usage().is_none());
 
@@ -539,13 +584,13 @@ mod tests {
             let res_fail_sc = check_session_limit("scan", 2, 6 * 3600);
             assert!(res_fail_sc.is_err());
 
-            std::env::remove_var("UNEVEN_TEST_HOME");
+            unsafe { std::env::remove_var("UNEVEN_TEST_HOME") };
         }
 
         // Run test 2: date reset
         {
             let temp = tempdir().unwrap();
-            std::env::set_var("UNEVEN_TEST_HOME", temp.path());
+            unsafe { std::env::set_var("UNEVEN_TEST_HOME", temp.path()) };
 
             let old_usage = UsageData {
                 date: "1970-01-01".to_string(),
@@ -561,10 +606,30 @@ mod tests {
 
             let current = read_usage().unwrap();
             assert_eq!(current.analyze_count, 1);
-            assert_eq!(current.date, chrono::Local::now().format("%Y-%m-%d").to_string());
+            assert_eq!(
+                current.date,
+                chrono::Local::now().format("%Y-%m-%d").to_string()
+            );
 
-            std::env::remove_var("UNEVEN_TEST_HOME");
+            unsafe { std::env::remove_var("UNEVEN_TEST_HOME") };
         }
     }
-}
 
+    #[test]
+    fn test_parse_key_catfive() {
+        assert_eq!(parse_key("INVALID-KEY").unwrap_err(), "malformed");
+        assert_eq!(parse_key("UNVN-PART1").unwrap_err(), "malformed");
+
+        // Create a valid payload
+        let valid_json = r#"{"id":"lic-123","tier":"pro","seats":2,"issued":1000,"expires":9999999999,"eh":"sig"}"#;
+        let b64 = URL_SAFE_NO_PAD.encode(valid_json.as_bytes());
+        let valid_key = format!("UNVN-v1-{}-SIG", b64);
+        assert!(parse_key(&valid_key).is_ok());
+
+        // Unknown tier rejected by Catfive schema
+        let unknown_json = r#"{"id":"lic-123","tier":"unsupported","seats":2,"issued":1000,"expires":9999999999,"eh":"sig"}"#;
+        let b64_unknown = URL_SAFE_NO_PAD.encode(unknown_json.as_bytes());
+        let unknown_key = format!("UNVN-v1-{}-SIG", b64_unknown);
+        assert_eq!(parse_key(&unknown_key).unwrap_err(), "unknown_tier");
+    }
+}

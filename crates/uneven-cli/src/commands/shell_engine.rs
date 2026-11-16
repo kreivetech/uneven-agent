@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -149,11 +151,51 @@ pub async fn handle_chat_message(
     sessions: ChatSessions,
 ) -> Result<String> {
     let root = loader::find_project_root(None);
-    
+
     let trimmed = user_message.trim();
     if trimmed.starts_with('/') {
         let reply = handle_slash_command(trimmed, config, &root)?;
         return Ok(reply);
+    }
+
+    // Check if user confirms / approves applying a pending patch
+    if uneven_core::application::shell_classifier::is_approval_intent(trimmed)
+        || trimmed.to_lowercase() == "apply"
+        || trimmed.to_lowercase() == "askf"
+    {
+        let pending = uneven_core::infrastructure::llm::history_manager::get_pending_patch_from_disk(session_id, &root)
+            .or_else(|| uneven_core::infrastructure::llm::history_manager::get_pending_patch_from_disk("default", &root));
+
+        let file_obj = if let Some(p) = pending {
+            Some(p)
+        } else {
+            let map = sessions.lock().unwrap();
+            let session_history = map.get(session_id);
+            session_history.and_then(|h| {
+                h.iter().rev()
+                    .find(|(role, content)| role == "assistant" && !content.is_empty())
+                    .and_then(|(_, content)| super::patch_engine::file_object(content, session_id))
+            })
+        };
+
+        if let Some(file_obj) = file_obj && !file_obj.patch.is_empty() {
+            super::patch_engine::file_action(&root, &file_obj);
+            let _ = uneven_core::infrastructure::llm::history_manager::clear_pending_patch_from_disk(session_id, &root);
+            let _ = uneven_core::infrastructure::llm::history_manager::clear_pending_patch_from_disk("default", &root);
+
+            let msg = if let Some(ref summary) = file_obj.summary {
+                format!("Changes applied successfully!\n\nSummary:\n{}", summary)
+            } else {
+                format!("Changes applied successfully! Total files affected: {}.", file_obj.patch.len())
+            };
+
+            let mut map = sessions.lock().unwrap();
+            let session_history = map.entry(session_id.to_string()).or_default();
+            session_history.push(("user".to_string(), trimmed.to_string()));
+            session_history.push(("assistant".to_string(), msg.clone()));
+
+            return Ok(msg);
+        }
     }
 
     // Automatically run silent index to keep knowledge base up-to-date
@@ -235,11 +277,10 @@ pub async fn handle_chat_message(
             );
 
             // Update the last turn in history to the optimized prompt
-            if let Some(last_turn) = iter_history.last_mut() {
-                if last_turn.0 == "user" {
+            if let Some(last_turn) = iter_history.last_mut()
+                && last_turn.0 == "user" {
                     last_turn.1 = prompt_to_use.clone();
                 }
-            }
 
             system_instructions_to_use = String::new();
         }
@@ -347,8 +388,9 @@ pub async fn handle_chat_message(
         attempts -= 1;
     }
 
-    // Check if the response contains multi_agents command
-    if let Some(parsed) = extract_json_local(&final_raw_response_content) {
+    // Check if the response contains action commands (multi_agents, think, plan, dde)
+    let parsed_cmd = extract_json_local(&final_raw_response_content);
+    if let Some(ref parsed) = parsed_cmd {
         if parsed.command == "multi_agents" || parsed.command == "multi-agents" || parsed.command == "multi_agent" {
             let config_brain_max_tokens = config.brain.max_tokens;
             if let Ok(reports) = crate::commands::multi_agents::run(&parsed.args, config_brain_max_tokens, config, session_id).await {
@@ -357,14 +399,14 @@ pub async fn handle_chat_message(
                 for (i, (task_desc, status)) in reports.iter().enumerate() {
                     report_msg.push_str(&format!("Agent {} [Task: {}]:\n{}\n\n", i + 1, task_desc, status));
                 }
-                
+
                 let feedback = format!(
                     "[System: All subagent tasks executed. Results are as follows. Please review them, make any adjustments if needed, and give a unified final explanation to the user:\n\n{}]",
                     report_msg
                 );
-                
+
                 history.push(("user".to_string(), feedback.clone()));
-                
+
                 let params = InferParams {
                     model: brain.model.clone(),
                     threads,
@@ -377,7 +419,7 @@ pub async fn handle_chat_message(
                     system: Some(system_instructions.clone()),
                     history: Some(history.clone()),
                 };
-                
+
                 let final_prompt = if brain.provider == "local" {
                     let local_turns = history.iter().map(|turn| {
                         uneven_core::infrastructure::llm::inference::chat_template::ChatTurn {
@@ -395,87 +437,41 @@ pub async fn handle_chat_message(
                 } else {
                     feedback.clone()
                 };
-                
+
                 if let Ok(new_res) = infer_with_params(&final_prompt, &params).await {
                     final_raw_response_content = new_res.content;
                 }
             }
-        }
-    }
-
-    let mut clean_response = final_raw_response_content.clone();
-
-    // Check if the response contains any files generated using the FILE_SESSIONID format
-    // Try to parse files using any alphanumeric 6-character session ID or generic formats
-    let mut files = Vec::new();
-    if let Ok(re_session) = regex::Regex::new(r"(?i)FILE_([a-zA-Z0-9]{6})") {
-        if let Some(cap) = re_session.captures(&final_raw_response_content) {
-            let session_id = cap[1].to_string();
-            files = super::askf::parse_files_with_id(&final_raw_response_content, &session_id);
-            if files.is_empty() {
-                // Try to parse using a regex that allows END_SESSIONID
-                let pattern = format!(
-                    r#"(?i)FILE_{}[\"\']?\s*[:=]?\s*[\"\']?[<\[\{{\(]?([^\s\]\[}}{{\"\',;<>\(\)]+)[\"\']?\s*[>\]}})]?\s*\n\s*```[\w]*\n([\s\S]*?)```\s*END_(?:FILE_)?{}"#,
-                    session_id, session_id
-                );
-                if let Ok(re) = regex::Regex::new(&pattern) {
-                    for cap in re.captures_iter(&final_raw_response_content) {
-                        let filename = cap[1].trim().to_string();
-                        let content = cap[2].to_string();
-                        if super::askf::is_safe_filename(&filename) {
-                            files.push(super::askf::ParsedFile {
-                                filename,
-                                content,
-                                patches: Vec::new(),
-                                is_patch: false,
-                                delete: false,
-                                rename_to: None,
-                            });
-                        }
-                    }
+        } else if parsed.command == "think" || parsed.command == "plan" {
+            let task = parsed.args.first().cloned().unwrap_or_else(|| user_message.to_string());
+            if !task.is_empty()
+                && let Ok(thought_res) = crate::commands::think::run(task, parsed.paths.clone(), None, None).await
+                && !thought_res.is_empty() {
+                    final_raw_response_content = thought_res;
                 }
-            }
         }
     }
 
-    if files.is_empty() {
-        files = super::askf::parse_files(&final_raw_response_content);
-    }
+    let clean_response = final_raw_response_content.clone();
 
-    if !files.is_empty() {
-        let _ = super::askf::write_parsed_files(&root, files);
-
-        // Strip FILE_SESSIONID blocks
-        if let Ok(re) = regex::Regex::new(r#"(?i)FILE_[a-zA-Z0-9]{6}[\"\']?\s*[:=]?\s*[\"\']?[<\[\{\(]?[^\s\]\[\}\{\"\',;<>\(\)]+[\"\']?\s*[>\]\}\)]?\s*\n\s*```[\s\S]*?```\s*END_(?:FILE_)?[a-zA-Z0-9]{6}\n?"#) {
-            clean_response = re.replace_all(&clean_response, "").to_string();
+    // Check if direct disk execution (`dde`) or explicit file action was requested
+    let is_dde = parsed_cmd.as_ref().is_some_and(|p| p.command == "dde" || p.command == "askf");
+    if is_dde {
+        let pending = uneven_core::infrastructure::llm::history_manager::get_pending_patch_from_disk(session_id, &root)
+            .or_else(|| uneven_core::infrastructure::llm::history_manager::get_pending_patch_from_disk("default", &root));
+        let file_obj = pending.or_else(|| super::patch_engine::file_object(&final_raw_response_content, session_id));
+        if let Some(file_obj) = file_obj && !file_obj.patch.is_empty() {
+            super::patch_engine::file_action(&root, &file_obj);
+            let _ = uneven_core::infrastructure::llm::history_manager::clear_pending_patch_from_disk(session_id, &root);
+            let _ = uneven_core::infrastructure::llm::history_manager::clear_pending_patch_from_disk("default", &root);
         }
-        // Strip generic FILE: blocks
-        if let Ok(re) = regex::Regex::new(r#"(?i)FILE[\"\']?\s*[:=]?\s*[\"\']?[<\[\{\(]?[^\s\]\[\}\{\"\',;<>\(\)]+[\"\']?\s*[>\]\}\)]?\s*\n```[\s\S]*?```\s*END_FILE\n?"#) {
-            clean_response = re.replace_all(&clean_response, "").to_string();
-        }
-        if let Ok(re) = regex::Regex::new(r#"(?i)FILE[\"\']?\s*[:=]?\s*[\"\']?[<\[\{\(]?[^\s\]\[\}\{\"\',;<>\(\)]+[\"\']?\s*[>\]\}\)]?\s*\n[\s\S]*?END_FILE\n?"#) {
-            clean_response = re.replace_all(&clean_response, "").to_string();
-        }
-        if let Ok(re) = regex::Regex::new(r#"(?i)FILE_[A-Z0-9]+[\"\']?\s*[:=]?\s*[\"\']?[<\[\{\(]?[^\s\]\[\}\{\"\',;<>\(\)]+[\"\']?\s*[>\]\}\)]?\s*\n\s*```[\s\S]*?```\s*END_(?:FILE_)?[A-Z0-9]+\n?"#) {
-            clean_response = re.replace_all(&clean_response, "").to_string();
-        }
-        if let Ok(re) = regex::Regex::new(r#"(?i)FILE_[A-Z0-9]+[\"\']?\s*[:=]?\s*[\"\']?[<\[\{\(]?[^\s\]\[\}\{\"\',;<>\(\)]+[\"\']?\s*[>\]\}\)]?\s*\n\s*PATCH\n[\s\S]*?END_(?:FILE_)?[A-Z0-9]+\n?"#) {
-            clean_response = re.replace_all(&clean_response, "").to_string();
-        }
-        if let Ok(re) = regex::Regex::new(r#"(?i)FILE_[A-Z0-9]+[\"\']?\s*[:=]?\s*[\"\']?[<\[\{\(]?[^\s\]\[\}\{\"\',;<>\(\)]+[\"\']?\s*[>\]\}\)]?\s*\n\s*DELETE\n\s*END_(?:FILE_)?[A-Z0-9]+\n?"#) {
-            clean_response = re.replace_all(&clean_response, "").to_string();
-        }
-        if let Ok(re) = regex::Regex::new(r#"(?i)FILE_[A-Z0-9]+[\"\']?\s*[:=]?\s*[\"\']?[<\[\{\(]?[^\s\]\[\}\{\"\',;<>\(\)]+[\"\']?\s*[>\]\}\)]?\s*\n\s*RENAME:\s*\S+\n\s*END_(?:FILE_)?[A-Z0-9]+\n?"#) {
-            clean_response = re.replace_all(&clean_response, "").to_string();
-        }
-        clean_response = clean_response.trim().to_string();
     }
 
     // Save updated history
     {
         let mut map = sessions.lock().unwrap();
         let session_history = map.entry(session_id.to_string()).or_default();
-        
+
         *session_history = history;
         session_history.push(("assistant".to_string(), final_raw_response_content.clone()));
 
@@ -486,6 +482,14 @@ pub async fn handle_chat_message(
     }
 
     Ok(clean_response)
+}
+
+use uneven_core::domain::actions::{extract_action_response, ShellActionResponse};
+
+type BrainResponse = ShellActionResponse;
+
+fn extract_json_local(text: &str) -> Option<BrainResponse> {
+    extract_action_response(text)
 }
 
 #[cfg(test)]
@@ -509,7 +513,7 @@ mod tests {
 
         let reply = handle_slash_command("/person reset", &loaded, dir.path()).unwrap();
         assert!(reply.contains("persona reset to default"));
-        
+
         let loaded_reset = loader::load_config(dir.path()).unwrap();
         assert!(loaded_reset.persona.is_none());
     }
@@ -526,25 +530,21 @@ mod tests {
         let loaded = loader::load_config(dir.path()).unwrap();
         assert_eq!(loaded.brain.reasoning_effort.as_deref(), Some("high"));
     }
-}
 
-#[derive(serde::Deserialize, Debug)]
-struct BrainResponse {
-    command: String,
-    #[serde(default)]
-    args: Vec<String>,
-    #[serde(default)]
-    _message: String,
-    #[serde(default)]
-    _paths: Vec<String>,
-}
-
-fn extract_json_local(text: &str) -> Option<BrainResponse> {
-    let start = text.find('{')?;
-    let end = text.rfind('}')?;
-    if start > end {
-        return None;
+    #[test]
+    fn test_extract_json_local_declarative() {
+        let text = "Here is my proposal:\n\n```shell-action\ncommand: think\nargs: [\"refactor database connection pool\"]\npaths: [\"src/db.rs\"]\nmessage: \"Let's plan the refactor\"\n```\n";
+        let parsed = extract_json_local(text).expect("Should parse declarative action block");
+        assert_eq!(parsed.command, "think");
+        assert_eq!(parsed.args, vec!["refactor database connection pool"]);
+        assert_eq!(parsed.paths, vec!["src/db.rs"]);
     }
-    let json_str = &text[start..=end];
-    serde_json::from_str(json_str).ok()
+
+    #[test]
+    fn test_extract_json_local_json() {
+        let text = "{\"command\": \"dde\", \"args\": [\"apply changes\"], \"paths\": []}";
+        let parsed = extract_json_local(text).expect("Should parse JSON action block");
+        assert_eq!(parsed.command, "dde");
+        assert_eq!(parsed.args, vec!["apply changes"]);
+    }
 }

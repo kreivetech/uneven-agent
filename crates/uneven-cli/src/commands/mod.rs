@@ -8,9 +8,10 @@ pub mod ask;
 pub mod docs;
 pub mod explain;
 pub mod autofix;
-pub mod askf;
+pub mod patch_engine;
+#[allow(unused_imports)]
+pub use patch_engine as askf;
 pub mod analyze;
-pub mod review;
 pub mod pentest;
 pub mod scan;
 pub mod test;
@@ -18,7 +19,6 @@ pub mod undo;
 pub mod restore;
 pub mod diff;
 pub mod ci;
-pub mod remote_shell;
 pub mod shell_engine;
 pub mod log;
 pub mod reset;
@@ -32,4 +32,6 @@ pub mod zeroday;
 pub mod stats;
 pub mod uninstall;
 pub mod multi_agents;
+pub mod think;
+pub mod ide;
 

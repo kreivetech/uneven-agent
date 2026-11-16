@@ -25,15 +25,15 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
     }
 
     // 1. Missing Property (TS2339)
-    if code_str == "TS2339" || error.message.contains("TS2339") {
-        if let Some(caps) = RE_PROP_MISSING.captures(&error.message) {
+    if (code_str == "TS2339" || error.message.contains("TS2339"))
+        && let Some(caps) = RE_PROP_MISSING.captures(&error.message) {
             let prop = caps.get(1).map(|m| m.as_str()).unwrap_or("property");
             
             let lines: Vec<&str> = content.lines().collect();
             let line_idx = error.line.saturating_sub(1);
-            if let Some(&original_line) = lines.get(line_idx) {
-                if let Ok(re_obj) = Regex::new(&format!(r"(\w+)\.{}", regex::escape(prop))) {
-                    if re_obj.is_match(original_line) {
+            if let Some(&original_line) = lines.get(line_idx)
+                && let Ok(re_obj) = Regex::new(&format!(r"(\w+)\.{}", regex::escape(prop)))
+                    && re_obj.is_match(original_line) {
                         let after_line = re_obj.replace(original_line, format!("($1 as any).{}", prop));
                         return Some(FixSuggestion {
                             file: error.file.clone(),
@@ -49,10 +49,7 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
                             suggested_fix: format!("Cast the object to 'any' before accessing '{}'", prop),
                         });
                     }
-                }
-            }
         }
-    }
 
     // 2. Missing Brace (TS1005)
     if (code_str == "TS1005" || error.message.contains("TS1005")) && error.message.contains("'}' expected") {

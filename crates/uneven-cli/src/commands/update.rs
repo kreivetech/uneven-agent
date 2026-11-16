@@ -33,9 +33,9 @@ pub async fn run() -> Result<()> {
     let check_file = uneven_dir.join("last_update_check");
     let now = chrono::Utc::now().timestamp();
 
-    if check_file.exists() {
-        if let Ok(content) = std::fs::read_to_string(&check_file) {
-            if let Ok(last_check) = content.trim().parse::<i64>() {
+    if check_file.exists()
+        && let Ok(content) = std::fs::read_to_string(&check_file)
+            && let Ok(last_check) = content.trim().parse::<i64>() {
                 let elapsed = now - last_check;
                 if (0..300).contains(&elapsed) {
                     let wait_secs = 300 - elapsed;
@@ -46,8 +46,6 @@ pub async fn run() -> Result<()> {
                     return Ok(());
                 }
             }
-        }
-    }
 
     println!("Checking for Uneven Agent updates...");
 

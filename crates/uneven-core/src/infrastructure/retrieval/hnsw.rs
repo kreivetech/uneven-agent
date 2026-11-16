@@ -134,7 +134,7 @@ pub async fn init() -> Result<(), UnevenError> {
                 embeddings: HashMap<String, Vec<f32>>,
                 documents:  HashMap<String, StoredDocument>,
             }
-            if let Ok(old) = bincode::deserialize::<BincodeStore>(&bytes) {
+            if let Ok(old) = postcard::from_bytes::<BincodeStore>(&bytes) {
                 let n = old.embeddings.len();
                 {
                     let HnswStore { index, meta } = &mut *store;
@@ -222,13 +222,12 @@ pub async fn search(query: Vec<f32>, top_k: usize) -> Result<RetrievalResult, Un
     let mut scores    = Vec::with_capacity(results.keys.len());
 
     for (key, dist) in results.keys.iter().zip(results.distances.iter()) {
-        if let Some(id) = store.meta.key_to_id.get(key) {
-            if let Some(doc) = store.meta.documents.get(id) {
+        if let Some(id) = store.meta.key_to_id.get(key)
+            && let Some(doc) = store.meta.documents.get(id) {
                 let similarity = (1.0 - dist).max(0.0_f32);
                 documents.push(doc.content.clone());
                 scores.push(similarity);
             }
-        }
     }
 
     Ok(RetrievalResult { documents, scores })
@@ -258,7 +257,7 @@ async fn try_load_hnsw(store: &mut HnswStore) -> Result<usize, UnevenError> {
     let meta_path = get_store_path(STORE_META_BIN);
     let meta_bytes = tokio::fs::read(&meta_path).await
         .map_err(|e| UnevenError::RetrievalError(format!("read meta: {e}")))?;
-    let meta = bincode::deserialize::<StoreMeta>(&meta_bytes)
+    let meta = postcard::from_bytes::<StoreMeta>(&meta_bytes)
         .map_err(|e| UnevenError::RetrievalError(format!("deserialize meta: {e}")))?;
     let n = meta.documents.len();
 
@@ -288,8 +287,8 @@ async fn write_hnsw(store: &HnswStore) -> Result<(), UnevenError> {
     tokio::fs::rename(&usearch_tmp, &usearch_path).await
         .map_err(|e| UnevenError::RetrievalError(format!("rename usearch: {e}")))?;
 
-    let meta_bytes = bincode::serialize(&store.meta)
-        .map_err(|e| UnevenError::RetrievalError(format!("bincode serialize meta: {e}")))?;
+    let meta_bytes = postcard::to_stdvec(&store.meta)
+        .map_err(|e| UnevenError::RetrievalError(format!("postcard serialize meta: {e}")))?;
     let meta_path = get_store_path(STORE_META_BIN);
     let tmp = format!("{}.tmp", meta_path.display());
     tokio::fs::write(&tmp, &meta_bytes).await
@@ -315,12 +314,7 @@ mod tests {
         // Start clean
         clear().await.unwrap();
         
-        let doc = StoredDocument {
-            id: "test1".to_string(),
-            path: "test.ts".to_string(),
-            content: "const x = 1;".to_string(),
-            doc_type: "code".to_string(),
-        };
+        let doc = StoredDocument::new("test1", "test.ts", "const x = 1;", "code");
         
         let mut emb = vec![0.0f32; DIMS];
         emb[0] = 1.0; 
@@ -355,12 +349,7 @@ mod tests {
         
         let docs = (0..5).map(|i| {
             (
-                StoredDocument {
-                    id: format!("doc{}", i),
-                    path: "f.ts".into(),
-                    content: format!("content {}", i),
-                    doc_type: "test".into(),
-                },
+                StoredDocument::new(format!("doc{}", i), "f.ts", format!("content {}", i), "test"),
                 {
                     let mut v = vec![0.0f32; DIMS];
                     v[i] = 1.0;

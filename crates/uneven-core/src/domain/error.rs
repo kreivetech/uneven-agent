@@ -69,6 +69,20 @@ pub enum UnevenError {
     Unknown(String),
 }
 
+impl From<infercraft::InferError> for UnevenError {
+    fn from(err: infercraft::InferError) -> Self {
+        match err {
+            infercraft::InferError::LlmError(msg) => UnevenError::LlmError(msg),
+            infercraft::InferError::ModelNotFound(msg) => UnevenError::ModelNotFound(msg),
+            infercraft::InferError::OutOfMemory(msg) => UnevenError::OutOfMemory(msg),
+            infercraft::InferError::Interrupted => UnevenError::Interrupted,
+            infercraft::InferError::Io(e) => UnevenError::IoError(e),
+            infercraft::InferError::HardwareError(msg) => UnevenError::KnowledgeError(msg),
+            infercraft::InferError::Other(msg) => UnevenError::Unknown(msg),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,0 +1,15 @@
+# Cross-compile linker configurations
+# Used by scripts/local-release.sh for non-native targets.
+#
+# Prerequisites:
+#   sudo apt-get install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu   # linux-arm64
+#
+# win32-x64 is built via GitHub Actions (windows-latest / MSVC).
+# Cross-compiling NAPI bindings for Windows from Linux requires libnode.dll
+# (Node.js Windows import library) which is not trivially available on Linux.
+
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-linux-gnu-gcc"
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

@@ -1,121 +1,131 @@
 //! History Context Optimizer
-//! Manages conversation history dynamically by avoiding redundant injection
-//! of system laws and project file maps.
+//!
+//! Re-exports context optimization, tagging, and session primitives powered by `contextcraft`,
+//! and provides uneven-specific integration for workspace file maps and patches.
 
-pub trait HistoryItem {
-    fn get_role(&self) -> &str;
-    fn get_content(&self) -> &str;
-    fn set_content(&mut self, content: String);
+pub use contextcraft::{
+    delete_session, extract_content_between, list_sessions, load_session, optimize_context,
+    save_session, update_content_between, BlockStrategy, ChatTurn, ContextBlock, ContextError,
+    ContextOptimizer, HistoryItem, DEFAULT_LAW_END, DEFAULT_LAW_START, DEFAULT_MAP_END,
+    DEFAULT_MAP_START,
+};
+
+pub const LAW_START: &str = DEFAULT_LAW_START;
+pub const LAW_END: &str = DEFAULT_LAW_END;
+pub const MAP_START: &str = DEFAULT_MAP_START;
+pub const MAP_END: &str = DEFAULT_MAP_END;
+
+use crate::infrastructure::knowledge::scanner::ProjectScanner;
+use crate::infrastructure::patch::FileObject;
+use crate::UnevenConfig;
+use std::path::Path;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct BrainTurn {
+    pub role: String,
+    pub content: String,
 }
 
-impl HistoryItem for (String, String) {
-    fn get_role(&self) -> &str { &self.0 }
-    fn get_content(&self) -> &str { &self.1 }
-    fn set_content(&mut self, content: String) { self.1 = content; }
-}
-
-const LAW_START: &str = "SYSTEM_LAWS_ACTIVE";
-const LAW_END: &str = "SYSTEM_LAWS_ACTIVE_END";
-const MAP_START: &str = "PROJECT_FILES_MAP_ACTIVE";
-const MAP_END: &str = "PROJECT_FILES_MAP_ACTIVE_END";
-
-fn extract_content_between(text: &str, start_tag: &str, end_tag: &str) -> Option<String> {
-    let start_idx = text.find(start_tag)? + start_tag.len();
-    let end_idx = text.find(end_tag)?;
-    if start_idx < end_idx {
-        Some(text[start_idx..end_idx].trim().to_string())
-    } else {
-        None
+impl HistoryItem for BrainTurn {
+    fn get_role(&self) -> &str {
+        &self.role
+    }
+    fn get_content(&self) -> &str {
+        &self.content
+    }
+    fn set_content(&mut self, content: String) {
+        self.content = content;
     }
 }
 
-fn update_content_between(text: &str, start_tag: &str, end_tag: &str, new_content: &str) -> Option<String> {
-    let start_idx = text.find(start_tag)?;
-    let end_idx = text.find(end_tag)? + end_tag.len();
-    if start_idx < end_idx {
-        let mut updated = text[..start_idx].to_string();
-        updated.push_str(start_tag);
-        updated.push('\n');
-        updated.push_str(new_content);
-        updated.push('\n');
-        updated.push_str(end_tag);
-        updated.push_str(&text[end_idx..]);
-        Some(updated)
-    } else {
-        None
-    }
-}
+pub fn get_project_files_map(config: &UnevenConfig, root: &Path) -> String {
+    let dirs = config
+        .knowledge
+        .as_ref()
+        .and_then(|k| k.dirs.clone())
+        .unwrap_or_else(|| vec![".".to_string()]);
+    let scanner = ProjectScanner::new(root);
+    let mut files = scanner.scan(dirs).unwrap_or_default();
 
-/// Optimizes the prompt to avoid redundant system rules (laws) and file maps.
-/// If laws or file maps are already present in the active conversation history,
-/// they are skipped in the current prompt. If the files map in the history is
-/// outdated compared to the current workspace, it is updated in-place.
-pub fn optimize_context<T: HistoryItem>(
-    history: &mut [T],
-    prompt: &str,
-    laws: &str,
-    files_map: Option<&str>,
-) -> String {
-    let mut has_laws = false;
-    let mut has_map = false;
-
-    // 1. Scan the history for existing tags
-    for item in history.iter() {
-        let content = item.get_content();
-        if content.contains(LAW_START) && content.contains(LAW_END) {
-            has_laws = true;
-        }
-        if content.contains(MAP_START) && content.contains(MAP_END) {
-            has_map = true;
-        }
-    }
-
-    // 2. If map exists, check if it needs update in-place in the history
-    if let Some(new_map) = files_map {
-        if has_map {
-            for item in history.iter_mut() {
-                let content = item.get_content();
-                if content.contains(MAP_START) && content.contains(MAP_END) {
-                    if let Some(old_map) = extract_content_between(content, MAP_START, MAP_END) {
-                        if old_map != new_map {
-                            if let Some(updated_content) = update_content_between(content, MAP_START, MAP_END, new_map) {
-                                item.set_content(updated_content);
-                                tracing::info!("HistoryOptimizer: Updated project files map in-place in conversation history.");
-                            }
-                        }
-                    }
-                    break;
-                }
+    if let Some(extra_files) = config.knowledge.as_ref().and_then(|k| k.files.clone()) {
+        for f in extra_files {
+            let normalized_f = f.replace('\\', "/");
+            let abs_path = root.join(&normalized_f);
+            if abs_path.exists() && abs_path.is_file() {
+                files.push(normalized_f);
             }
         }
+        files.sort();
+        files.dedup();
     }
+    files.join("\n")
+}
 
-    // 3. Assemble the prompt wrapper for the current message
-    let mut prefix = String::new();
+pub fn save_history_to_disk(
+    history: &[BrainTurn],
+    session_id: &str,
+    root: &Path,
+) -> std::io::Result<()> {
+    let mut history_buf = history.to_vec();
+    crate::application::ContextCompactorService::auto_compact(&mut history_buf);
 
-    if !has_laws {
-        prefix.push_str(LAW_START);
-        prefix.push('\n');
-        prefix.push_str(laws);
-        prefix.push('\n');
-        prefix.push_str(LAW_END);
-        prefix.push_str("\n\n");
+    let history_cache_dir = crate::infrastructure::utils::paths::project_cache_dir(root);
+    let history_file = history_cache_dir.join(format!("{}.json", session_id));
+    save_session(&history_file, &history_buf).map_err(|e| match e {
+        ContextError::Io(io_err) => io_err,
+        other => std::io::Error::new(std::io::ErrorKind::Other, other),
+    })
+}
+
+pub fn get_history_from_disk(session_id: &str, root: &Path) -> Option<Vec<BrainTurn>> {
+    let history_cache_dir = crate::infrastructure::utils::paths::project_cache_dir(root);
+    let history_file = history_cache_dir.join(format!("{}.json", session_id));
+    load_session(&history_file).ok()
+}
+
+pub fn list_project_sessions(root: &Path) -> Vec<String> {
+    let history_cache_dir = crate::infrastructure::utils::paths::project_cache_dir(root);
+    list_sessions(&history_cache_dir).unwrap_or_default()
+}
+
+pub fn delete_history_from_disk(session_id: &str, root: &Path) -> std::io::Result<()> {
+    let history_cache_dir = crate::infrastructure::utils::paths::project_cache_dir(root);
+    let history_file = history_cache_dir.join(format!("{}.json", session_id));
+    delete_session(&history_file).map_err(|e| match e {
+        ContextError::Io(io_err) => io_err,
+        other => std::io::Error::new(std::io::ErrorKind::Other, other),
+    })
+}
+
+pub fn save_pending_patch_to_disk(
+    patch: &FileObject,
+    session_id: &str,
+    root: &Path,
+) -> std::io::Result<()> {
+    let history_cache_dir = crate::infrastructure::utils::paths::project_cache_dir(root);
+    let _ = std::fs::create_dir_all(&history_cache_dir);
+    if let Ok(json) = serde_json::to_string_pretty(patch) {
+        let patch_file = history_cache_dir.join(format!("{}.patch.json", session_id));
+        std::fs::write(patch_file, json)?;
     }
+    Ok(())
+}
 
-    if let Some(new_map) = files_map {
-        if !has_map {
-            prefix.push_str(MAP_START);
-            prefix.push('\n');
-            prefix.push_str(new_map);
-            prefix.push('\n');
-            prefix.push_str(MAP_END);
-            prefix.push_str("\n\n");
-        }
-    }
-
-    if prefix.is_empty() {
-        prompt.to_string()
+pub fn get_pending_patch_from_disk(session_id: &str, root: &Path) -> Option<FileObject> {
+    let history_cache_dir = crate::infrastructure::utils::paths::project_cache_dir(root);
+    let patch_file = history_cache_dir.join(format!("{}.patch.json", session_id));
+    if let Ok(json) = std::fs::read_to_string(&patch_file) {
+        serde_json::from_str(&json).ok()
     } else {
-        format!("{}{}", prefix, prompt)
+        None
     }
+}
+
+pub fn clear_pending_patch_from_disk(session_id: &str, root: &Path) -> std::io::Result<()> {
+    let history_cache_dir = crate::infrastructure::utils::paths::project_cache_dir(root);
+    let patch_file = history_cache_dir.join(format!("{}.patch.json", session_id));
+    if patch_file.exists() {
+        std::fs::remove_file(patch_file)?;
+    }
+    Ok(())
 }

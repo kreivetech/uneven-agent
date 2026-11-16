@@ -36,8 +36,8 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
         let re_inject = Regex::new(r"@Inject\(([\w\.]+)\)").unwrap();
         let lines: Vec<&str> = content.lines().collect();
         let line_idx = error.line.saturating_sub(1);
-        if let Some(&original_line) = lines.get(line_idx) {
-            if let Some(caps) = re_inject.captures(original_line) {
+        if let Some(&original_line) = lines.get(line_idx)
+            && let Some(caps) = re_inject.captures(original_line) {
                 let inject_target = caps.get(1).map(|m| m.as_str()).unwrap_or("");
                 let target = format!("@Inject({})", inject_target);
                 let replacement = format!("@Inject(forwardRef(() => {}))", inject_target);
@@ -57,7 +57,6 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
                     });
                 }
             }
-        }
     }
 
     // 2. Missing @Injectable()

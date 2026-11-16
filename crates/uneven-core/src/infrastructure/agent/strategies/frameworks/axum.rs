@@ -31,8 +31,8 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
     {
         let lines: Vec<&str> = content.lines().collect();
         let line_idx = error.line.saturating_sub(1);
-        if let Some(&original_line) = lines.get(line_idx) {
-            if original_line.contains("fn ") {
+        if let Some(&original_line) = lines.get(line_idx)
+            && original_line.contains("fn ") {
                 let indent = original_line.chars().take_while(|c| c.is_whitespace()).collect::<String>();
                 return Some(FixSuggestion {
                     file: error.file.clone(),
@@ -48,7 +48,6 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
                     suggested_fix: "Injected FIXME comment indicating extractor order constraint".to_string(),
                 });
             }
-        }
     }
 
     // 2. Missing Send/Sync Bounds
@@ -58,8 +57,8 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
     {
         let lines: Vec<&str> = content.lines().collect();
         let line_idx = error.line.saturating_sub(1);
-        if let Some(&original_line) = lines.get(line_idx) {
-            if original_line.contains(".await") {
+        if let Some(&original_line) = lines.get(line_idx)
+            && original_line.contains(".await") {
                 let indent = original_line.chars().take_while(|c| c.is_whitespace()).collect::<String>();
                 return Some(FixSuggestion {
                     file: error.file.clone(),
@@ -75,7 +74,6 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
                     suggested_fix: "Injected FIXME comment above the await point to warn about non-Send guards".to_string(),
                 });
             }
-        }
     }
 
     None

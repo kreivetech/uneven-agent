@@ -132,9 +132,9 @@ pub async fn run(
     }
 
     // Index URLs from config (scrape and save as local file cache under global cache scraped_urls/)
-    if let Some(ref k) = config.knowledge {
-        if let Some(ref urls) = k.urls {
-            if !urls.is_empty() {
+    if let Some(ref k) = config.knowledge
+        && let Some(ref urls) = k.urls
+            && !urls.is_empty() {
                 let scraper = uneven_core::infrastructure::knowledge::web_loader::WebScraper::new();
                 let scrape_dir = uneven_core::infrastructure::utils::paths::project_cache_dir(&root).join("scraped_urls");
                 let _ = fs::create_dir_all(&scrape_dir);
@@ -155,8 +155,6 @@ pub async fn run(
                     }
                 }
             }
-        }
-    }
 
     inc_idx.save()?;
     spinner.finish_and_clear();

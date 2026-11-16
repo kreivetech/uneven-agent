@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::fs;
 use std::path::Path;
 use uneven_core::infrastructure::knowledge::incremental_index::IncrementalIndex;
-use uneven_core::infrastructure::llm::{InferParams, infer_with_params};
+use uneven_core::infrastructure::llm::{infer_with_params, InferParams};
 use uneven_core::UnevenConfig;
 
 pub struct ContextAssembler;
@@ -21,30 +21,33 @@ impl ContextAssembler {
 
         let mut paths_to_load = Vec::new();
 
-        if let Some(ref paths) = relevant_paths_override {
-            if !paths.is_empty() {
+        if let Some(ref paths) = relevant_paths_override
+            && !paths.is_empty() {
                 paths_to_load = paths.clone();
             }
-        }
 
         if paths_to_load.is_empty() {
             // Load file list cache from the global cache directory
-            let cache_path = uneven_core::infrastructure::utils::paths::project_cache_dir(root).join("file-list-cache.json");
+            let cache_path = uneven_core::infrastructure::utils::paths::project_cache_dir(root)
+                .join("file-list-cache.json");
             let mut files = Vec::new();
-            if cache_path.exists() {
-                if let Ok(content) = fs::read_to_string(&cache_path) {
-                    if let Ok(parsed) = serde_json::from_str::<Vec<String>>(&content) {
+            if cache_path.exists()
+                && let Ok(content) = fs::read_to_string(&cache_path)
+                    && let Ok(parsed) = serde_json::from_str::<Vec<String>>(&content) {
                         files = parsed;
                     }
-                }
-            }
 
             // Fallback to index state / files list
             if files.is_empty() {
                 let inc_idx = IncrementalIndex::new(root);
-                files = inc_idx.state.files.keys()
+                files = inc_idx
+                    .state
+                    .files
+                    .keys()
                     .filter_map(|abs_path| {
-                        Path::new(abs_path).strip_prefix(root).ok()
+                        Path::new(abs_path)
+                            .strip_prefix(root)
+                            .ok()
                             .map(|p| p.to_string_lossy().to_string())
                     })
                     .collect();
@@ -52,7 +55,8 @@ impl ContextAssembler {
 
             // If empty, fallback to a directory scan on the fly
             if files.is_empty() {
-                let scanner = uneven_core::infrastructure::knowledge::scanner::ProjectScanner::new(root);
+                let scanner =
+                    uneven_core::infrastructure::knowledge::scanner::ProjectScanner::new(root);
                 if let Ok(scanned) = scanner.scan(vec![".".to_string()]) {
                     files = scanned;
                 }
@@ -69,13 +73,20 @@ impl ContextAssembler {
                 - Select at most 5-10 files. Be precise and select only files that are directly related to the user's query.\n\
                 - If no files are relevant, return [].";
 
+                // Use the max_context defined in the brain configuration, defaulting to a provider-aware fallback
+                let max_context = if brain.provider == "local" {
+                    4096 // Safe default VRAM budget for local inference
+                } else {
+                    1000000 // Modern default for cloud APIs (OpenAI, Gemini, Anthropic, etc.)
+                };
+
                 let params = InferParams {
                     model: brain.model.clone(),
                     threads: brain.local.as_ref().and_then(|l| l.threads).unwrap_or(4),
-                    max_tokens: 2000,
-                    temperature: 0.0,
+                    max_tokens: 20000,
+                    temperature: 0.1,
                     repeat_penalty: 1.1,
-                    max_context: 8192,
+                    max_context,
                     grammar: None,
                     provider: Some(brain.provider.clone()),
                     system: Some(system_prompt.to_string()),
@@ -108,10 +119,14 @@ impl ContextAssembler {
                         };
 
                         context.push_str(&format!("**File: {}**\n```\n", rel_path));
-                        let numbered = uneven_core::infrastructure::utils::formatter::format_with_line_numbers(&display_content);
+                        let numbered =
+                            uneven_core::infrastructure::utils::formatter::format_with_line_numbers(
+                                &display_content,
+                            );
                         context.push_str(&numbered);
                         if truncated {
-                            context.push_str("... (rest of file truncated to save context window)\n");
+                            context
+                                .push_str("... (rest of file truncated to save context window)\n");
                         }
                         context.push_str("```\n\n");
                     }
@@ -124,14 +139,18 @@ impl ContextAssembler {
 }
 
 fn parse_classifier_response(response: &str, all_paths: &[String]) -> Vec<String> {
-    let cleaned = response.trim()
+    let cleaned = response
+        .trim()
         .trim_start_matches("```json")
         .trim_start_matches("```")
         .trim_end_matches("```")
         .trim();
 
     if let Ok(paths) = serde_json::from_str::<Vec<String>>(cleaned) {
-        return paths.into_iter().filter(|p| all_paths.contains(p)).collect();
+        return paths
+            .into_iter()
+            .filter(|p| all_paths.contains(p))
+            .collect();
     }
 
     // Fallback: search for any of the known file paths in the raw response

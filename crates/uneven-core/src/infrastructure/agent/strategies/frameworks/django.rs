@@ -67,8 +67,8 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
     if msg_lower.contains("csrf") {
         let lines: Vec<&str> = content.lines().collect();
         let line_idx = error.line.saturating_sub(1);
-        if let Some(&original_line) = lines.get(line_idx) {
-            if original_line.contains("def ") {
+        if let Some(&original_line) = lines.get(line_idx)
+            && original_line.contains("def ") {
                 let indent = original_line.chars().take_while(|c| c.is_whitespace()).collect::<String>();
                 return Some(FixSuggestion {
                     file: error.file.clone(),
@@ -84,7 +84,6 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
                     suggested_fix: "Injected @csrf_exempt decorator above the view function".to_string(),
                 });
             }
-        }
     }
 
     None

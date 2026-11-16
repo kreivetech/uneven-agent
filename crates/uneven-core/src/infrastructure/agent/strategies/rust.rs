@@ -23,8 +23,8 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
     let lines: Vec<&str> = content.lines().collect();
 
     // 1. Undefined value (E0425)
-    if code_str == "E0425" || error.message.contains("E0425") {
-        if let Some(caps) = RE_CANNOT_FIND.captures(&error.message) {
+    if (code_str == "E0425" || error.message.contains("E0425"))
+        && let Some(caps) = RE_CANNOT_FIND.captures(&error.message) {
             let var_name = caps.get(1).map(|m| m.as_str()).unwrap_or("var");
             let line_idx = error.line.saturating_sub(1);
             if let Some(&original_line) = lines.get(line_idx) {
@@ -44,7 +44,6 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
                 });
             }
         }
-    }
 
     // 2. Missing Trait (E0277)
     if code_str == "E0277" || error.message.contains("E0277") {
@@ -56,8 +55,8 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
             struct_line_idx -= 1;
         }
 
-        if let Some(&struct_line) = lines.get(struct_line_idx) {
-            if struct_line.contains("struct ") || struct_line.contains("enum ") {
+        if let Some(&struct_line) = lines.get(struct_line_idx)
+            && (struct_line.contains("struct ") || struct_line.contains("enum ")) {
                 let indent = struct_line.chars().take_while(|c| c.is_whitespace()).collect::<String>();
                 return Some(FixSuggestion {
                     file: error.file.clone(),
@@ -73,7 +72,6 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
                     suggested_fix: "Added common derives to the closest struct/enum".to_string(),
                 });
             }
-        }
     }
 
     None

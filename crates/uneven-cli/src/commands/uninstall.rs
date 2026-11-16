@@ -43,8 +43,8 @@ pub async fn run(yes: bool) -> Result<()> {
     let profiles = [".zshrc", ".bashrc", ".profile"];
     for profile in &profiles {
         let path = home.join(profile);
-        if path.exists() {
-            if let Ok(content) = fs::read_to_string(&path) {
+        if path.exists()
+            && let Ok(content) = fs::read_to_string(&path) {
                 let mut lines: Vec<String> = Vec::new();
                 let mut changed = false;
                 for line in content.lines() {
@@ -69,7 +69,6 @@ pub async fn run(yes: bool) -> Result<()> {
                     }
                 }
             }
-        }
     }
 
     println!("\n  {} Uneven Agent has been uninstalled successfully.", style("✓").green().bold());

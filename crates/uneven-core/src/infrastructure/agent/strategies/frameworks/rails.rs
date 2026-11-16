@@ -88,8 +88,8 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
     if error.message.contains("RecordNotFound") || error.message.contains("Couldn't find") {
         let lines: Vec<&str> = content.lines().collect();
         let line_idx = error.line.saturating_sub(1);
-        if let Some(&original_line) = lines.get(line_idx) {
-            if original_line.contains(".find(") {
+        if let Some(&original_line) = lines.get(line_idx)
+            && original_line.contains(".find(") {
                 return Some(FixSuggestion {
                     file: error.file.clone(),
                     line: error.line,
@@ -104,7 +104,6 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
                     suggested_fix: "Converted find() to find_by(id: ) to return nil instead of raising an exception".to_string(),
                 });
             }
-        }
     }
 
     None

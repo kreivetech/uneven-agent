@@ -43,12 +43,11 @@ pub async fn run(off: bool, provider: Option<String>, model: Option<String>) -> 
                 let mut tokens = "0".to_string();
                 for _ in 0..20 {
                     sleep(Duration::from_millis(100)).await;
-                    if tokens_file.exists() {
-                        if let Ok(content) = fs::read_to_string(&tokens_file) {
+                    if tokens_file.exists()
+                        && let Ok(content) = fs::read_to_string(&tokens_file) {
                             tokens = content.trim().to_string();
                             break;
                         }
-                    }
                 }
 
                 println!(
@@ -57,11 +56,10 @@ pub async fn run(off: bool, provider: Option<String>, model: Option<String>) -> 
                     pid
                 );
 
-                if let Ok(t) = tokens.parse::<u32>() {
-                    if t > 0 {
+                if let Ok(t) = tokens.parse::<u32>()
+                    && t > 0 {
                         println!("{}", style(format!("  [Total tokens used by autofix: {}]", t)).dim());
                     }
-                }
 
                 let _ = fs::remove_file(&tokens_file);
             }
@@ -73,9 +71,9 @@ pub async fn run(off: bool, provider: Option<String>, model: Option<String>) -> 
     }
 
     // Check if already running
-    if pid_file.exists() {
-        if let Ok(existing_pid_str) = fs::read_to_string(&pid_file) {
-            if let Ok(pid) = existing_pid_str.trim().parse::<u32>() {
+    if pid_file.exists()
+        && let Ok(existing_pid_str) = fs::read_to_string(&pid_file)
+            && let Ok(pid) = existing_pid_str.trim().parse::<u32>() {
                 if pid != std::process::id() && is_process_alive(pid) {
                     println!(
                         "{} Proactive autofix service is already running (PID {}).",
@@ -89,8 +87,6 @@ pub async fn run(off: bool, provider: Option<String>, model: Option<String>) -> 
                     let _ = fs::remove_file(&pid_file);
                 }
             }
-        }
-    }
 
     let mut config = loader::load_config(&root)?;
     if let Some(p) = provider {

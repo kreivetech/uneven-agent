@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Uneven IDE
+GenericName=Integrated Development Environment
+Comment=IDE with preemptive security audits, surgical diffs, and safe analytics
+Exec=uneven-ui %U
+Icon=uneven-ui
+Type=Application
+Categories=Development;IDE;
+Terminal=false
+StartupWMClass=uneven-ui
+Keywords=AI;Agent;IDE;Code;Editor;Development;

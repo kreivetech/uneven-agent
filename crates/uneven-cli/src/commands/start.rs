@@ -10,13 +10,6 @@ pub async fn run() -> Result<()> {
     let root = loader::find_project_root(None);
     let mut config = loader::load_config(&root)?;
 
-    // Spawn remote shell if configured
-    if let Some(shell_cfg) = config.remote_shell.clone() {
-        tokio::spawn(async move {
-            let _ = crate::commands::remote_shell::run_server(shell_cfg).await;
-        });
-    }
-
     // Set watch configuration to empty terminals (proactive-only mode)
     if config.watch.is_none() {
         config.watch = Some(uneven_core::domain::WatchConfig {

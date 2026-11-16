@@ -175,8 +175,8 @@ fn extract_title(html: &str) -> String {
     static RE_TITLE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?i)<title[^>]*>([^<]+)</title>"#).unwrap());
     static RE_H1: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?i)<h1[^>]*>([^<]+)</h1>"#).unwrap());
 
-    if let Some(caps) = RE_TITLE.captures(html) {
-        if let Some(m) = caps.get(1) {
+    if let Some(caps) = RE_TITLE.captures(html)
+        && let Some(m) = caps.get(1) {
             let t = m.as_str().trim();
             if t.len() > 200 {
                 return t[..200].to_string();
@@ -184,10 +184,9 @@ fn extract_title(html: &str) -> String {
                 return t.to_string();
             }
         }
-    }
 
-    if let Some(caps) = RE_H1.captures(html) {
-        if let Some(m) = caps.get(1) {
+    if let Some(caps) = RE_H1.captures(html)
+        && let Some(m) = caps.get(1) {
             let t = m.as_str().trim();
             if t.len() > 200 {
                 return t[..200].to_string();
@@ -195,18 +194,16 @@ fn extract_title(html: &str) -> String {
                 return t.to_string();
             }
         }
-    }
 
     "Untitled".to_string()
 }
 
 fn extract_content(html: &str, content_type: &str) -> String {
     if content_type.contains("application/json") {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(html) {
-            if let Ok(formatted) = serde_json::to_string_pretty(&json) {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(html)
+            && let Ok(formatted) = serde_json::to_string_pretty(&json) {
                 return formatted;
             }
-        }
         return html.to_string();
     }
 
@@ -315,39 +312,35 @@ impl WebScraper {
     pub async fn fetch_sitemap_for_domain(&self, domain_url: &str) -> Vec<String> {
         // 1. Fetch robots.txt to find sitemap declaration
         let robots_url = format!("{}/robots.txt", domain_url);
-        if let Ok(resp) = self.client.get(&robots_url).send().await {
-            if resp.status().is_success() {
-                if let Ok(txt) = resp.text().await {
+        if let Ok(resp) = self.client.get(&robots_url).send().await
+            && resp.status().is_success()
+                && let Ok(txt) = resp.text().await {
                     static RE_SITEMAP: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?i)^sitemap:\s*([^\s]+)"#).unwrap());
                     for line in txt.lines() {
                         if let Some(caps) = RE_SITEMAP.captures(line.trim()) {
                             let sitemap_url = caps.get(1).unwrap().as_str();
-                            if let Some(urls) = self.download_sitemap(sitemap_url).await {
-                                if !urls.is_empty() {
+                            if let Some(urls) = self.download_sitemap(sitemap_url).await
+                                && !urls.is_empty() {
                                     return urls;
                                 }
-                            }
                         }
                     }
                 }
-            }
-        }
         // 2. Fallbacks
         for path in &["/sitemap.xml", "/sitemap.txt", "/sitemap_index.xml"] {
             let sitemap_url = format!("{}{}", domain_url, path);
-            if let Some(urls) = self.download_sitemap(&sitemap_url).await {
-                if !urls.is_empty() {
+            if let Some(urls) = self.download_sitemap(&sitemap_url).await
+                && !urls.is_empty() {
                     return urls;
                 }
-            }
         }
         Vec::new()
     }
 
     async fn download_sitemap(&self, url: &str) -> Option<Vec<String>> {
-        if let Ok(resp) = self.client.get(url).send().await {
-            if resp.status().is_success() {
-                if let Ok(content) = resp.text().await {
+        if let Ok(resp) = self.client.get(url).send().await
+            && resp.status().is_success()
+                && let Ok(content) = resp.text().await {
                     let urls = if url.ends_with(".txt") {
                         parse_sitemap_txt(&content)
                     } else {
@@ -357,8 +350,6 @@ impl WebScraper {
                         return Some(urls);
                     }
                 }
-            }
-        }
         None
     }
 
@@ -396,13 +387,11 @@ impl WebScraper {
             snippet = snippet.replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'").trim().to_string();
             
             let mut resolved_url = href.clone();
-            if resolved_url.contains("uddg=") {
-                if let Ok(parsed_url) = reqwest::Url::parse(&format!("https://ddg.gg{}", resolved_url)) {
-                    if let Some((_, val)) = parsed_url.query_pairs().find(|(key, _)| key == "uddg") {
+            if resolved_url.contains("uddg=")
+                && let Ok(parsed_url) = reqwest::Url::parse(&format!("https://ddg.gg{}", resolved_url))
+                    && let Some((_, val)) = parsed_url.query_pairs().find(|(key, _)| key == "uddg") {
                         resolved_url = val.into_owned();
                     }
-                }
-            }
             
             results.push(SearchResult {
                 title,
@@ -413,8 +402,8 @@ impl WebScraper {
         
         // Trigger background sitemap caching for top search results
         for res in &results {
-            if let Ok(parsed_url) = reqwest::Url::parse(&res.url) {
-                if let Some(host) = parsed_url.host_str() {
+            if let Ok(parsed_url) = reqwest::Url::parse(&res.url)
+                && let Some(host) = parsed_url.host_str() {
                     let scheme = parsed_url.scheme();
                     let domain = format!("{}://{}", scheme, host);
                     let self_clone = self.clone();
@@ -440,7 +429,6 @@ impl WebScraper {
                         }
                     });
                 }
-            }
         }
         
         Ok(results)
@@ -460,8 +448,8 @@ impl WebScraper {
             
         let mut results = Vec::new();
         static RE_TAGS: Lazy<Regex> = Lazy::new(|| Regex::new(r#"<[^>]+>"#).unwrap());
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
-            if let Some(items) = json["query"]["search"].as_array() {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body)
+            && let Some(items) = json["query"]["search"].as_array() {
                 for item in items.iter().take(3) {
                     let title = item["title"].as_str().unwrap_or("").to_string();
                     let raw_snippet = item["snippet"].as_str().unwrap_or("").to_string();
@@ -475,7 +463,6 @@ impl WebScraper {
                     });
                 }
             }
-        }
         Ok(results)
     }
 }

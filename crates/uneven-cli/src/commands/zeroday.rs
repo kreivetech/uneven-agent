@@ -1,90 +1,70 @@
 use anyhow::Result;
 use console::style;
 use indicatif::ProgressBar;
-use std::fs;
-use std::path::Path;
 use crate::commands::license;
+use uneven_core::application::{ZerodayResult, ZerodayService};
 use uneven_core::infrastructure::config::loader;
-use uneven_core::infrastructure::pentester::{
-    self, Severity, SecurityFinding,
-};
-use uneven_core::infrastructure::pentester::zeroday::run_zeroday_scan;
+use uneven_core::infrastructure::pentester::Severity;
 
-pub async fn run(dir: Option<String>, report: Option<String>) -> Result<()> {
+pub async fn run(dir: Option<String>, report: Option<String>, deep: bool) -> Result<()> {
     // 1. License Check (Requires Team Plan)
     license::require_team()?;
 
     let root = loader::find_project_root(None);
     let config = loader::load_config(&root)?;
 
-    // 2. Resolve directories to scan
-    // CLI option takes precedence, then config.zeroday.dirs, then default to "./src"
-    let dirs: Vec<String> = if let Some(d) = dir {
-        vec![d]
-    } else if let Some(ref zd) = config.zeroday {
-        if let Some(ref d) = zd.dirs {
-            d.clone()
-        } else {
-            vec!["./".to_string()]
-        }
-    } else {
-        vec!["./".to_string()]
-    };
-
-    // 3. Resolve low cpu mode
-    let low_cpu_mode = if let Some(ref zd) = config.zeroday {
-        zd.low_cpu_mode.unwrap_or(false)
-    } else {
-        false
-    };
-
-    // 4. Run native Zero-Day Scan
+    // 2. Setup Progress Spinner
     let pb = ProgressBar::new_spinner();
-    pb.set_message("Running Zero-Day static analysis...");
+    let initial_msg = if deep {
+        "Starting autonomous Think Zero-Day audit and multi-file taint tracing..."
+    } else {
+        "Running Zero-Day static analysis and taint tracking..."
+    };
+    pb.set_message(initial_msg);
     pb.enable_steady_tick(std::time::Duration::from_millis(100));
 
-    // Convert Vec<String> to Vec<&str>
-    let dir_refs: Vec<&str> = dirs.iter().map(|s| s.as_str()).collect();
-    let findings = run_zeroday_scan(&dir_refs, low_cpu_mode).await?;
+    let pb_clone = pb.clone();
+    let on_progress = move |msg: &str| {
+        pb_clone.set_message(msg.to_string());
+    };
 
-    pb.finish_with_message("Zero-Day static analysis completed");
+    let dir_override = dir.map(|d| vec![d]);
+    let generate_reports = report.is_some();
 
-    let mut all_findings = findings;
+    // 3. Execute decoupled ZerodayService
+    let result: ZerodayResult = ZerodayService::run_zeroday_scan(
+        &root,
+        dir_override,
+        &config,
+        generate_reports,
+        deep,
+        Some(on_progress),
+    )
+    .await?;
 
-    // 5. LLM Review phase at the end
-    // Use LLMSecurityReviewer if there are findings and brain config is available
-    if !all_findings.is_empty() {
-        let zeroday_brain = config.get_brain_for_command("zeroday");
-        let reviewer = pentester::reviewer::LLMSecurityReviewer::new(&zeroday_brain);
-        let _ = reviewer.review_findings(&mut all_findings).await;
-    }
+    pb.finish_and_clear();
 
-    // 6. Print findings summary and individual details to console
-    let critical = all_findings.iter().filter(|f| f.severity == Severity::Critical).count();
-    let high = all_findings.iter().filter(|f| f.severity == Severity::High).count();
-    let medium = all_findings.iter().filter(|f| f.severity == Severity::Medium).count();
-    let low = all_findings.iter().filter(|f| f.severity == Severity::Low).count();
-
+    // 4. Print summary to console
     println!();
-    println!("{}", style(format!("  Findings: {} total", all_findings.len())).bold());
-    if critical > 0 {
-        println!("{}", style(format!("    ● critical : {}", critical)).red().bold());
+    println!("{}", style(format!("  Findings: {} total ({}ms)", result.findings.len(), result.duration_ms)).bold());
+    if result.summary.critical > 0 {
+        println!("{}", style(format!("    ● critical : {}", result.summary.critical)).red().bold());
     }
-    if high > 0 {
-        println!("{}", style(format!("    ● high     : {}", high)).color256(208).bold());
+    if result.summary.high > 0 {
+        println!("{}", style(format!("    ● high     : {}", result.summary.high)).color256(208).bold());
     }
-    if medium > 0 {
-        println!("{}", style(format!("    ● medium   : {}", medium)).yellow().bold());
+    if result.summary.medium > 0 {
+        println!("{}", style(format!("    ● medium   : {}", result.summary.medium)).yellow().bold());
     }
-    if low > 0 {
-        println!("{}", style(format!("    ● low      : {}", low)).dim());
+    if result.summary.low > 0 {
+        println!("{}", style(format!("    ● low      : {}", result.summary.low)).dim());
     }
     println!();
 
-    if all_findings.is_empty() {
+    if result.findings.is_empty() {
         println!("{}", style("  ✓ No custom zero-day vulnerabilities or high-risk flows detected.").green());
     } else {
-        for f in &all_findings {
+        for f in &result.findings {
             let loc = if let Some(ref file) = f.file {
                 if let Some(line) = f.line {
                     format!("{}:{}", file, line)
@@ -94,7 +74,7 @@ pub async fn run(dir: Option<String>, report: Option<String>) -> Result<()> {
             } else {
                 "N/A".to_string()
             };
-            
+
             let sev_style = match f.severity {
                 Severity::Critical => style(format!("{:?}", f.severity)).red().bold(),
                 Severity::High => style(format!("{:?}", f.severity)).color256(208).bold(),
@@ -110,6 +90,9 @@ pub async fn run(dir: Option<String>, report: Option<String>) -> Result<()> {
                 f.description,
                 f.recommendation
             );
+            if let Some(ref trail) = f.match_content {
+                println!("    {} {}", style("Taint Trail:").bold().yellow(), style(trail).cyan());
+            }
             if let Some(ref note) = f.llm_note {
                 println!("    {} {}", style("AI Review Note:").bold().blue(), note);
             }
@@ -117,165 +100,16 @@ pub async fn run(dir: Option<String>, report: Option<String>) -> Result<()> {
         }
     }
 
-    // 7. Generate report (Markdown/HTML) if requested
-    if let Some(ref fmt) = report {
-        let reports_dir = root.join(".uneven").join("reports").join("security");
-        fs::create_dir_all(&reports_dir)?;
+    if let Some(ref md) = result.markdown_report_path {
+        println!("{}", style(format!("  📄 Markdown report: {}", md)).cyan());
+    }
+    if let Some(ref html) = result.html_report_path {
+        println!("{}", style(format!("  🌐 HTML report:     {}", html)).cyan());
+    }
 
-        let (gen_md, gen_html) = match fmt.as_str() {
-            "md" => (true, false),
-            "html" => (false, true),
-            _ => (true, true),
-        };
-
-        if gen_md {
-            let md_report = build_markdown_report(&all_findings, &root.to_string_lossy(), &dirs.join(", "));
-            let md_path = reports_dir.join("zeroday-report.md");
-            fs::write(&md_path, md_report)?;
-            println!("{}", style(format!("  📄 Markdown report: {}", md_path.to_string_lossy())).cyan());
-        }
-
-        if gen_html {
-            let html_report = build_html_report(&all_findings, &root.to_string_lossy(), &dirs.join(", "));
-            let html_path = reports_dir.join("zeroday-report.html");
-            fs::write(&html_path, html_report)?;
-            println!("{}", style(format!("  🌐 HTML report:     {}", html_path.to_string_lossy())).cyan());
-        }
-    } else {
+    if report.is_none() {
         println!("{}", style("  Tip: run with -r or --report <format> (md|html|both) to generate a detailed report").dim());
     }
 
     Ok(())
-}
-
-fn build_markdown_report(findings: &[SecurityFinding], project_root: &str, target: &str) -> String {
-    let project_name = Path::new(project_root).file_name().and_then(|s| s.to_str()).unwrap_or("project");
-    let date = chrono::Utc::now().to_rfc3339();
-    let mut md = format!(
-        "# Zero-Day Vulnerability Scan Report: {}\n\n- **Scanned Directories**: {}\n- **Generated At**: {}\n\n---\n\n",
-        project_name, target, date
-    );
-
-    if findings.is_empty() {
-        md.push_str("## ✓ No vulnerabilities or threats found.\n");
-    } else {
-        md.push_str("## Findings Summary\n\n");
-        let critical = findings.iter().filter(|f| f.severity == Severity::Critical).count();
-        let high = findings.iter().filter(|f| f.severity == Severity::High).count();
-        let medium = findings.iter().filter(|f| f.severity == Severity::Medium).count();
-        let low = findings.iter().filter(|f| f.severity == Severity::Low).count();
-        md.push_str(&format!(
-            "- **Critical**: {}\n- **High**: {}\n- **Medium**: {}\n- **Low**: {}\n\n---\n\n## Details\n\n",
-            critical, high, medium, low
-        ));
-
-        for f in findings {
-            let mut detail = format!(
-                "### [{:?}] {} in `{}`\n- **Description**: {}\n- **Recommendation**: {}\n",
-                f.severity,
-                f.finding_type,
-                f.file.clone().unwrap_or_else(|| "N/A".to_string()),
-                f.description,
-                f.recommendation
-            );
-            if let Some(ref note) = f.llm_note {
-                detail.push_str(&format!("- **AI Audit Note**: {}\n", note));
-            }
-            detail.push('\n');
-            md.push_str(&detail);
-        }
-    }
-    md
-}
-
-fn build_html_report(findings: &[SecurityFinding], project_root: &str, target: &str) -> String {
-    let project_name = Path::new(project_root).file_name().and_then(|s| s.to_str()).unwrap_or("project");
-    let title = format!("Zero-Day Security Audit - {}", project_name);
-
-    let mut content = format!(
-        r#"<header>
-    <div>
-      <h1>Zero-Day Vulnerability Scan Report: {}</h1>
-      <p>Scanned Directories: {}</p>
-    </div>
-    <div class="meta">
-      <span class="badge">Generated by Uneven</span>
-    </div>
-  </header>
-  <div class="container">
-    <div class="card">
-      <h2>Executive Summary</h2>
-      <div class="stats">"#,
-        project_name, target
-    );
-
-    let critical = findings.iter().filter(|f| f.severity == Severity::Critical).count();
-    let high = findings.iter().filter(|f| f.severity == Severity::High).count();
-    let medium = findings.iter().filter(|f| f.severity == Severity::Medium).count();
-    let low = findings.iter().filter(|f| f.severity == Severity::Low).count();
-    content.push_str(&format!(
-        r#"<div class="stat"><div class="value">{}</div><div class="label">Critical</div></div>
-        <div class="stat"><div class="value">{}</div><div class="label">High</div></div>
-        <div class="stat"><div class="value">{}</div><div class="label">Medium</div></div>
-        <div class="stat"><div class="value">{}</div><div class="label">Low</div></div>"#,
-        critical, high, medium, low
-    ));
-
-    content.push_str(
-        r#"      </div>
-    </div>
-    <div class="card">
-      <h2>Security Findings Registry</h2>
-      <div class="tbl-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Severity</th>
-              <th>Type</th>
-              <th>Location</th>
-              <th>Description</th>
-              <th>Recommendation</th>
-            </tr>
-          </thead>
-          <tbody>"#
-    );
-
-    for f in findings {
-        let file_loc = if let Some(ref file) = f.file {
-            if let Some(line) = f.line {
-                format!("{}:{}", file, line)
-            } else {
-                file.clone()
-            }
-        } else {
-            "N/A".to_string()
-        };
-
-        let desc = if let Some(ref note) = f.llm_note {
-            format!("{}<br/><small style=\"color: #6a737d;\"><strong>AI Note:</strong> {}</small>", f.description, note)
-        } else {
-            f.description.clone()
-        };
-
-        content.push_str(&format!(
-            r#"<tr>
-              <td><strong>{:?}</strong></td>
-              <td>{}</td>
-              <td><code>{}</code></td>
-              <td>{}</td>
-              <td>{}</td>
-            </tr>"#,
-            f.severity, f.finding_type, file_loc, desc, f.recommendation
-        ));
-    }
-
-    content.push_str(
-        r#"          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>"#
-    );
-
-    uneven_core::infrastructure::reporting::generate_html_report(&title, &content)
 }

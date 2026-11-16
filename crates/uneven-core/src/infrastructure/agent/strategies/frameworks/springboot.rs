@@ -43,8 +43,8 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
 
         let lines: Vec<&str> = content.lines().collect();
         let line_idx = error.line.saturating_sub(1);
-        if let Some(&original_line) = lines.get(line_idx) {
-            if original_line.contains("class ") {
+        if let Some(&original_line) = lines.get(line_idx)
+            && original_line.contains("class ") {
                 let indent = original_line.chars().take_while(|c| c.is_whitespace()).collect::<String>();
                 return Some(FixSuggestion {
                     file: error.file.clone(),
@@ -60,7 +60,6 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
                     suggested_fix: "Injected @Service annotation above the class definition".to_string(),
                 });
             }
-        }
     }
 
     // 2. Circular Dependency / Unsatisfied Dependency due to cycles

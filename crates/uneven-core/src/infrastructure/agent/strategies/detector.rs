@@ -59,17 +59,15 @@ pub fn has_npm_dependency(project_root: &Path, dep_name: &str) -> bool {
         Err(_) => return false,
     };
 
-    if let Some(deps) = json.get("dependencies").and_then(|d| d.as_object()) {
-        if deps.contains_key(dep_name) {
+    if let Some(deps) = json.get("dependencies").and_then(|d| d.as_object())
+        && deps.contains_key(dep_name) {
             return true;
         }
-    }
 
-    if let Some(dev_deps) = json.get("devDependencies").and_then(|d| d.as_object()) {
-        if dev_deps.contains_key(dep_name) {
+    if let Some(dev_deps) = json.get("devDependencies").and_then(|d| d.as_object())
+        && dev_deps.contains_key(dep_name) {
             return true;
         }
-    }
 
     false
 }
@@ -77,25 +75,21 @@ pub fn has_npm_dependency(project_root: &Path, dep_name: &str) -> bool {
 /// Checks if a Python dependency exists in the closest requirements.txt or pyproject.toml.
 pub fn has_python_dependency(project_root: &Path, dep_name: &str) -> bool {
     let req_path = project_root.join("requirements.txt");
-    if req_path.exists() {
-        if let Ok(content) = fs::read_to_string(&req_path) {
+    if req_path.exists()
+        && let Ok(content) = fs::read_to_string(&req_path) {
             let pattern = format!(r"(?:^|\s){}(?:\s|>=|<=|==|$)", regex::escape(dep_name));
-            if let Ok(re) = Regex::new(&pattern) {
-                if re.is_match(&content) {
+            if let Ok(re) = Regex::new(&pattern)
+                && re.is_match(&content) {
                     return true;
                 }
-            }
         }
-    }
 
     let pyproj_path = project_root.join("pyproject.toml");
-    if pyproj_path.exists() {
-        if let Ok(content) = fs::read_to_string(&pyproj_path) {
-            if content.to_lowercase().contains(&dep_name.to_lowercase()) {
+    if pyproj_path.exists()
+        && let Ok(content) = fs::read_to_string(&pyproj_path)
+            && content.to_lowercase().contains(&dep_name.to_lowercase()) {
                 return true;
             }
-        }
-    }
 
     false
 }

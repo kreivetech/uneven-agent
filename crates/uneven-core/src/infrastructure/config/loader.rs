@@ -81,7 +81,6 @@ fn get_defaults() -> UnevenConfig {
             masked_columns: vec![],
             report_redactions: Some(true),
         },
-        remote_shell: None,
         proactive: Some(crate::domain::config::ProactiveConfig {
             enabled: Some(true),
             auto_fix: Some(true),
@@ -106,7 +105,7 @@ fn get_defaults() -> UnevenConfig {
 /// Recursively overrides keys in `a` with those in `b`.
 fn override_json_values(a: &mut serde_json::Value, b: &serde_json::Value) {
     match (a, b) {
-        (serde_json::Value::Object(ref mut a_map), serde_json::Value::Object(ref b_map)) => {
+        (serde_json::Value::Object(a_map), serde_json::Value::Object(b_map)) => {
             for (k, v) in b_map {
                 if let Some(a_val) = a_map.get_mut(k) {
                     override_json_values(a_val, v);
@@ -129,7 +128,8 @@ pub fn sync_config_from_ts(project_root: &Path) -> Result<(), UnevenError> {
     }
     let overlay_val = overlay.unwrap();
 
-    let config_path = crate::infrastructure::utils::paths::project_cache_dir(project_root).join("config.json");
+    let config_path =
+        crate::infrastructure::utils::paths::project_cache_dir(project_root).join("config.json");
     let mut current_json = String::new();
     let current_opt = if let Ok(content) = fs::read_to_string(&config_path) {
         current_json = content;
@@ -163,7 +163,8 @@ pub fn sync_config_from_ts(project_root: &Path) -> Result<(), UnevenError> {
 pub fn load_config(project_root: &Path) -> Result<UnevenConfig, UnevenError> {
     let _ = sync_config_from_ts(project_root);
 
-    let config_path = crate::infrastructure::utils::paths::project_cache_dir(project_root).join("config.json");
+    let config_path =
+        crate::infrastructure::utils::paths::project_cache_dir(project_root).join("config.json");
     if config_path.exists() {
         let content = fs::read_to_string(&config_path)?;
         let config: UnevenConfig = serde_json::from_str(&content)?;
@@ -171,6 +172,20 @@ pub fn load_config(project_root: &Path) -> Result<UnevenConfig, UnevenError> {
     } else {
         Ok(get_defaults())
     }
+}
+
+/// Persists configuration to project cache config.json
+pub fn save_config(project_root: &Path, config: &UnevenConfig) -> Result<(), UnevenError> {
+    let config_path =
+        crate::infrastructure::utils::paths::project_cache_dir(project_root).join("config.json");
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let content = serde_json::to_string_pretty(config)?;
+    let tmp_path = config_path.with_extension("tmp");
+    fs::write(&tmp_path, content)?;
+    fs::rename(&tmp_path, &config_path)?;
+    Ok(())
 }
 
 // ─── uneven.config.ts regex-based parser ──────────────────────────────────────
@@ -329,7 +344,11 @@ fn arr_val(section: &str, key: &str) -> Option<Vec<String>> {
     let val_str = caps.get(1)?.as_str();
     let list = val_str
         .split(',')
-        .map(|s| s.trim().trim_matches(|c| c == '\'' || c == '"' || c == '`').to_string())
+        .map(|s| {
+            s.trim()
+                .trim_matches(|c| c == '\'' || c == '"' || c == '`')
+                .to_string()
+        })
         .filter(|s| !s.is_empty())
         .collect();
     Some(list)
@@ -364,7 +383,9 @@ fn parse_config_ts(project_root: &Path) -> Option<serde_json::Value> {
             if let Some(max_tok) = num_val(block, "maxTokens") {
                 brain_map.insert("maxTokens".to_string(), serde_json::json!(max_tok as usize));
             }
-            if let Some(re) = str_val(block, "reasoningEffort").or_else(|| str_val(block, "reasoning_effort")) {
+            if let Some(re) =
+                str_val(block, "reasoningEffort").or_else(|| str_val(block, "reasoning_effort"))
+            {
                 brain_map.insert("reasoningEffort".to_string(), serde_json::Value::String(re));
             }
             if let Some(local_src) = extract_section(block, "local") {
@@ -382,7 +403,10 @@ fn parse_config_ts(project_root: &Path) -> Option<serde_json::Value> {
             }
             brains_vec.push(serde_json::Value::Object(brain_map));
         }
-        map.insert("brains".to_string(), serde_json::Value::Array(brains_vec.clone()));
+        map.insert(
+            "brains".to_string(),
+            serde_json::Value::Array(brains_vec.clone()),
+        );
         if !brains_vec.is_empty() {
             map.insert("brain".to_string(), brains_vec[0].clone());
         }
@@ -400,7 +424,9 @@ fn parse_config_ts(project_root: &Path) -> Option<serde_json::Value> {
         if let Some(max_tok) = num_val(&brain_src, "maxTokens") {
             brain_map.insert("maxTokens".to_string(), serde_json::json!(max_tok as usize));
         }
-        if let Some(re) = str_val(&brain_src, "reasoningEffort").or_else(|| str_val(&brain_src, "reasoning_effort")) {
+        if let Some(re) = str_val(&brain_src, "reasoningEffort")
+            .or_else(|| str_val(&brain_src, "reasoning_effort"))
+        {
             brain_map.insert("reasoningEffort".to_string(), serde_json::Value::String(re));
         }
         if let Some(local_src) = extract_section(&brain_src, "local") {
@@ -426,7 +452,10 @@ fn parse_config_ts(project_root: &Path) -> Option<serde_json::Value> {
         for (k, v) in routing_map {
             json_routing.insert(k, serde_json::Value::String(v));
         }
-        map.insert("routing".to_string(), serde_json::Value::Object(json_routing));
+        map.insert(
+            "routing".to_string(),
+            serde_json::Value::Object(json_routing),
+        );
     }
 
     // knowledge
@@ -556,7 +585,10 @@ fn parse_config_ts(project_root: &Path) -> Option<serde_json::Value> {
         if let Some(sev) = str_val(&notifications_src, "minSeverity") {
             n_map.insert("minSeverity".to_string(), serde_json::Value::String(sev));
         }
-        map.insert("notifications".to_string(), serde_json::Value::Object(n_map));
+        map.insert(
+            "notifications".to_string(),
+            serde_json::Value::Object(n_map),
+        );
     }
 
     // security
@@ -569,14 +601,23 @@ fn parse_config_ts(project_root: &Path) -> Option<serde_json::Value> {
             s_map.insert("block".to_string(), serde_json::json!(block));
         }
         if let Some(blocked_columns) = arr_val(&security_src, "blockedColumns") {
-            s_map.insert("blockedColumns".to_string(), serde_json::json!(blocked_columns));
+            s_map.insert(
+                "blockedColumns".to_string(),
+                serde_json::json!(blocked_columns),
+            );
         }
         if let Some(masked_columns) = arr_val(&security_src, "maskedColumns") {
-            s_map.insert("maskedColumns".to_string(), serde_json::json!(masked_columns));
+            s_map.insert(
+                "maskedColumns".to_string(),
+                serde_json::json!(masked_columns),
+            );
         }
 
         if let Some(blocked_tables) = arr_val(&security_src, "blockedTables") {
-            s_map.insert("blockedTables".to_string(), serde_json::json!(blocked_tables));
+            s_map.insert(
+                "blockedTables".to_string(),
+                serde_json::json!(blocked_tables),
+            );
         }
         if let Some(rr) = bool_val(&security_src, "reportRedactions") {
             s_map.insert("reportRedactions".to_string(), serde_json::json!(rr));
@@ -743,7 +784,10 @@ fn parse_config_ts(project_root: &Path) -> Option<serde_json::Value> {
         if let Some(rl_src) = extract_section(&rs_src, "rateLimit") {
             let mut rl_map = serde_json::Map::new();
             if let Some(rpm) = num_val(&rl_src, "requestsPerMinute") {
-                rl_map.insert("requestsPerMinute".to_string(), serde_json::json!(rpm as u32));
+                rl_map.insert(
+                    "requestsPerMinute".to_string(),
+                    serde_json::json!(rpm as u32),
+                );
             }
             if let Some(b) = num_val(&rl_src, "burst") {
                 rl_map.insert("burst".to_string(), serde_json::json!(b as u32));
@@ -816,7 +860,7 @@ mod tests {
         fs::write(dir.path().join("uneven.config.ts"), ts_content).unwrap();
 
         let val = parse_config_ts(dir.path()).unwrap();
-        
+
         let brain = val.get("brain").unwrap();
         assert_eq!(brain.get("provider").unwrap().as_str().unwrap(), "openai");
         assert_eq!(brain.get("model").unwrap().as_str().unwrap(), "gpt-4");
@@ -858,14 +902,17 @@ mod tests {
         fs::write(dir.path().join("uneven.config.ts"), ts_content).unwrap();
 
         let val = parse_config_ts(dir.path()).unwrap();
-        
+
         let brains = val.get("brains").unwrap().as_array().unwrap();
         assert_eq!(brains.len(), 2);
-        
+
         let b0 = &brains[0];
         assert_eq!(b0.get("id").unwrap().as_str().unwrap(), "deepseek");
         assert_eq!(b0.get("provider").unwrap().as_str().unwrap(), "openai");
-        assert_eq!(b0.get("model").unwrap().as_str().unwrap(), "deepseek-v4-flash");
+        assert_eq!(
+            b0.get("model").unwrap().as_str().unwrap(),
+            "deepseek-v4-flash"
+        );
         assert_eq!(b0.get("temperature").unwrap().as_f64().unwrap(), 0.5);
         assert_eq!(b0.get("maxTokens").unwrap().as_u64().unwrap(), 4096);
 
@@ -899,7 +946,8 @@ mod tests {
 
         sync_config_from_ts(dir.path()).unwrap();
 
-        let config_json_path = crate::infrastructure::utils::paths::project_cache_dir(dir.path()).join("config.json");
+        let config_json_path =
+            crate::infrastructure::utils::paths::project_cache_dir(dir.path()).join("config.json");
         assert!(config_json_path.exists());
 
         let loaded = load_config(dir.path()).unwrap();
@@ -925,10 +973,16 @@ mod tests {
         fs::write(dir.path().join("uneven.config.ts"), ts_content).unwrap();
 
         let val = parse_config_ts(dir.path()).unwrap();
-        assert_eq!(val.get("persona").unwrap().as_str().unwrap(), "Custom Assistant Persona");
-        
+        assert_eq!(
+            val.get("persona").unwrap().as_str().unwrap(),
+            "Custom Assistant Persona"
+        );
+
         let brain = val.get("brain").unwrap();
-        assert_eq!(brain.get("reasoningEffort").unwrap().as_str().unwrap(), "medium");
+        assert_eq!(
+            brain.get("reasoningEffort").unwrap().as_str().unwrap(),
+            "medium"
+        );
 
         let loaded = load_config(dir.path()).unwrap();
         assert_eq!(loaded.persona.as_deref(), Some("Custom Assistant Persona"));

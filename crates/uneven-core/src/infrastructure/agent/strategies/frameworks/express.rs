@@ -31,8 +31,8 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
     if error.message.contains("Cannot set headers") || error.message.contains("HeadersAlreadySent") {
         let lines: Vec<&str> = content.lines().collect();
         let line_idx = error.line.saturating_sub(1);
-        if let Some(&original_line) = lines.get(line_idx) {
-            if (original_line.contains("res.send") || original_line.contains("res.json") || original_line.contains("res.redirect") || original_line.contains("res.status"))
+        if let Some(&original_line) = lines.get(line_idx)
+            && (original_line.contains("res.send") || original_line.contains("res.json") || original_line.contains("res.redirect") || original_line.contains("res.status"))
                 && !original_line.trim().starts_with("return ") {
                 let target_idx = original_line.find("res.").unwrap_or(0);
                 let before = &original_line[..target_idx];
@@ -51,7 +51,6 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
                     suggested_fix: "Injected early return to prevent subsequent response executions.".to_string(),
                 });
             }
-        }
     }
 
     // 2. Incorrect signature for error handling middleware

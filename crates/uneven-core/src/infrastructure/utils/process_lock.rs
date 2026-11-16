@@ -44,11 +44,10 @@ impl ProcessLock {
 
         // Check existing lock
         if self.lock_path.exists() {
-            if let Some(existing) = self.read_lock() {
-                if is_process_alive(existing.pid) {
+            if let Some(existing) = self.read_lock()
+                && is_process_alive(existing.pid) {
                     return Ok(Some(existing));
                 }
-            }
             self.remove_lock();
         }
 
@@ -73,11 +72,10 @@ impl ProcessLock {
                 Ok(None)
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                if let Some(existing) = self.read_lock() {
-                    if is_process_alive(existing.pid) {
+                if let Some(existing) = self.read_lock()
+                    && is_process_alive(existing.pid) {
                         return Ok(Some(existing));
                     }
-                }
                 // Old owner inactive, try to remove and create again
                 self.remove_lock();
                 match fs::OpenOptions::new()
@@ -132,11 +130,9 @@ pub fn is_process_alive(pid: u32) -> bool {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
-        {
-            if status.success() {
+            && status.success() {
                 return true;
             }
-        }
         // Fallback: check if the directory in /proc exists (works on the vast majority of Linux distros)
         Path::new(&format!("/proc/{}", pid)).exists()
     }

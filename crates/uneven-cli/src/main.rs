@@ -1,9 +1,9 @@
-use clap::{Parser, Subcommand};
 use anyhow::Result;
+use clap::{Parser, Subcommand};
 
 mod commands;
-mod ui;
 mod errors;
+mod ui;
 
 #[derive(Parser)]
 #[command(name = "uneven")]
@@ -85,9 +85,9 @@ enum Commands {
         model: Option<String>,
     },
 
-    /// Ask anything about your project
+    /// Ask anything about your project or request a code task
     Ask {
-        /// The question to ask
+        /// Question or task to investigate and plan
         question: String,
 
         /// AI provider
@@ -160,10 +160,29 @@ enum Commands {
         model: Option<String>,
     },
 
-    /// Create or edit files based on a task
+    /// Create or edit files based on a task (alias to ask)
+    #[command(hide = true)]
     Askf {
         /// Task description
         task: String,
+
+        /// AI provider
+        #[arg(long, value_name = "name")]
+        provider: Option<String>,
+
+        /// AI model name
+        #[arg(long, value_name = "name")]
+        model: Option<String>,
+    },
+
+    /// Deep reasoning and pre-flight architectural critique before proposing changes
+    Think {
+        /// Task or modification goal
+        task: String,
+
+        /// Target file paths to inspect
+        #[arg(short, long, value_name = "path")]
+        files: Vec<String>,
 
         /// AI provider
         #[arg(long, value_name = "name")]
@@ -209,45 +228,6 @@ enum Commands {
         model: Option<String>,
     },
 
-    /// AI code review over a git diff
-    Review {
-        /// Review ref range
-        #[arg(long, value_name = "ref")]
-        from: Option<String>,
-
-        /// Review specific commit
-        #[arg(long, value_name = "hash")]
-        commit: Option<String>,
-
-        /// Review staged only
-        #[arg(long)]
-        staged: bool,
-
-        /// Save review as Markdown
-        #[arg(short, long)]
-        report: bool,
-
-        /// Extra context
-        #[arg(long, value_name = "text")]
-        context: Option<String>,
-
-        /// AI provider
-        #[arg(long, value_name = "name")]
-        provider: Option<String>,
-
-        /// AI model name
-        #[arg(long, value_name = "name")]
-        model: Option<String>,
-
-        /// Base branch to compare against (e.g. main)
-        #[arg(long, value_name = "branch")]
-        base: Option<String>,
-
-        /// Files or directories to review (optional)
-        #[arg(value_name = "path")]
-        paths: Vec<String>,
-    },
-
     /// Scan source code for security vulnerabilities (2 static scans per 6h limit on Free tier, active requires Team)
     Pentest {
         /// Mode: static or active
@@ -280,6 +260,10 @@ enum Commands {
         /// Generate report (md, html, both)
         #[arg(short, long, value_name = "format")]
         report: Option<String>,
+
+        /// Run deep multi-turn autonomous taint tracing with Think reasoning
+        #[arg(long)]
+        deep: bool,
     },
 
     /// Detect malicious patterns and compromised npm packages (2 executions per 6h limit on Free tier)
@@ -372,9 +356,6 @@ enum Commands {
         github: bool,
     },
 
-    /// Start a local HTTP/HTTPS server
-    RemoteShell,
-
     /// Show activity log
     Log,
 
@@ -389,6 +370,14 @@ enum Commands {
 
     /// Update Uneven AI executable to the latest stable release
     Update,
+
+    /// Launch the Uneven visual desktop IDE cockpit
+    #[command(alias = "gui", alias = "ui")]
+    Ide {
+        /// Optional directory or project path to open
+        #[arg(value_name = "path")]
+        path: Option<String>,
+    },
 
     /// Show API usage costs and optimization stats
     Stats,
@@ -414,14 +403,50 @@ enum LicenseCommands {
     Deactivate,
 }
 
+fn is_known_subcommand(cmd: &str) -> bool {
+    matches!(
+        cmd,
+        "init"
+            | "info"
+            | "start"
+            | "watch"
+            | "index"
+            | "chat"
+            | "ask"
+            | "askf"
+            | "think"
+            | "docs"
+            | "explain"
+            | "autofix"
+            | "analyze"
+            | "pentest"
+            | "zeroday"
+            | "scan"
+            | "test"
+            | "undo"
+            | "restore"
+            | "diff"
+            | "ci"
+            | "log"
+            | "reset"
+            | "license"
+            | "update"
+            | "stats"
+            | "uninstall"
+            | "ide"
+            | "ui"
+            | "gui"
+    )
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
 
     // Load global environment variables from ~/.uneven/bin/env
     let global_env_path = uneven_core::infrastructure::utils::paths::global_bin_dir().join("env");
-    if global_env_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&global_env_path) {
+    if global_env_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&global_env_path) {
             for line in content.lines() {
                 let trimmed_line = line.trim();
                 if trimmed_line.is_empty() || trimmed_line.starts_with('#') {
@@ -429,13 +454,24 @@ async fn main() -> Result<()> {
                 }
                 if let Some((key, val)) = trimmed_line.split_once('=') {
                     let val_clean = val.trim().trim_matches(|c| c == '\'' || c == '"');
-                    std::env::set_var(key.trim(), val_clean);
+                    unsafe { std::env::set_var(key.trim(), val_clean) };
                 }
             }
         }
-    }
 
     let args: Vec<String> = std::env::args().collect();
+    let bin_name = args.first().map(|s| s.as_str()).unwrap_or("");
+    let is_une_alias = bin_name.ends_with("/une")
+        || bin_name == "une"
+        || bin_name.ends_with("\\une.exe")
+        || bin_name == "une.exe";
+
+    // If invoked as `une` or `une <path>` (e.g. `une .` or `une ~`)
+    if is_une_alias {
+        let target_path = args.get(1).map(|s| s.as_str());
+        return commands::ide::run(target_path).await;
+    }
+
     if args.len() == 2 {
         if args[1] == "-h" || args[1] == "--help" {
             commands::help::run().await?;
@@ -455,13 +491,29 @@ async fn main() -> Result<()> {
             }
             std::process::exit(0);
         }
+
+        // If invoked as `uneven .` or `uneven <path>` where the argument is a directory/path
+        let candidate = &args[1];
+        let is_path_candidate = candidate == "."
+            || candidate == ".."
+            || candidate.starts_with("./")
+            || candidate.starts_with("../")
+            || candidate.starts_with('/')
+            || candidate.starts_with('~')
+            || (std::path::Path::new(candidate).exists() && std::path::Path::new(candidate).is_dir());
+
+        if is_path_candidate && !candidate.starts_with('-') && !is_known_subcommand(candidate) {
+            return commands::ide::run(Some(candidate.as_str())).await;
+        }
     }
 
     // Automatically ensure workspace setup and embedding models are initialized
     let first_run_root = uneven_core::infrastructure::config::loader::find_project_root(None);
-    let first_run_config_path = uneven_core::infrastructure::utils::paths::project_cache_dir(&first_run_root).join("config.json");
+    let first_run_config_path =
+        uneven_core::infrastructure::utils::paths::project_cache_dir(&first_run_root)
+            .join("config.json");
     if !first_run_config_path.exists() {
-        std::env::set_var("UNEVEN_FIRST_RUN", "true");
+        unsafe { std::env::set_var("UNEVEN_FIRST_RUN", "true") };
     }
 
     let _ = commands::init::ensure_workspace_initialized().await;
@@ -480,109 +532,128 @@ async fn main() -> Result<()> {
         Some(Commands::Init) => commands::init::run().await,
         Some(Commands::Info) => commands::info::run().await,
         Some(Commands::Start) => commands::start::run().await,
-        Some(Commands::Watch { commands, ignore, provider, model }) => {
-            commands::watch::run(commands, ignore, provider, model).await
-        }
-        Some(Commands::Index { dir, full, dry_run, skip_large, max_file_size, yes }) => {
-            commands::index::run(dir, full, dry_run, skip_large, max_file_size, yes).await
-        }
-        Some(Commands::Chat { provider, model }) => {
-            commands::chat::run(provider, model).await
-        }
-        Some(Commands::Ask { question, provider, model }) => {
-            commands::ask::run(question, provider, model).await
-        }
-        Some(Commands::Docs { file, symbol, format, out, provider, model }) => {
-            commands::docs::run(file, symbol, format, out, provider, model).await
-        }
-        Some(Commands::Explain { file, focus, provider, model, no_guardian }) => {
-            commands::explain::run(file, focus, provider, model, no_guardian).await
-        }
-        Some(Commands::Autofix { off, provider, model }) => {
-            commands::autofix::run(off, provider, model).await
-        }
-        Some(Commands::Askf { task, provider, model }) => {
-            commands::askf::run(task, provider, model).await
-        }
-        Some(Commands::Analyze { db, prompt, report, theme, package_exe, clear_cache, provider, model }) => {
-            commands::analyze::run(db, prompt, report, theme, package_exe, clear_cache, provider, model).await
-        }
-        Some(Commands::Review {
-            from,
-            commit,
-            staged,
-            report,
-            context,
+        Some(Commands::Watch {
+            commands,
+            ignore,
             provider,
             model,
-            base,
-            paths,
+        }) => commands::watch::run(commands, ignore, provider, model).await,
+        Some(Commands::Index {
+            dir,
+            full,
+            dry_run,
+            skip_large,
+            max_file_size,
+            yes,
+        }) => commands::index::run(dir, full, dry_run, skip_large, max_file_size, yes).await,
+        Some(Commands::Chat { provider, model }) => commands::chat::run(provider, model).await,
+        Some(Commands::Ask {
+            question,
+            provider,
+            model,
+        }) => commands::ask::run(question, provider, model).await,
+        Some(Commands::Docs {
+            file,
+            symbol,
+            format,
+            out,
+            provider,
+            model,
+        }) => commands::docs::run(file, symbol, format, out, provider, model).await,
+        Some(Commands::Explain {
+            file,
+            focus,
+            provider,
+            model,
+            no_guardian,
+        }) => commands::explain::run(file, focus, provider, model, no_guardian).await,
+        Some(Commands::Autofix {
+            off,
+            provider,
+            model,
+        }) => commands::autofix::run(off, provider, model).await,
+        Some(Commands::Askf {
+            task,
+            provider,
+            model,
+        }) => commands::ask::run(task, provider, model).await,
+        Some(Commands::Think {
+            task,
+            files,
+            provider,
+            model,
         }) => {
-            commands::review::run(
-                from,
-                commit,
-                staged,
+            commands::think::run(task, files, provider, model).await.map(|_| ())
+        }
+        Some(Commands::Analyze {
+            db,
+            prompt,
+            report,
+            theme,
+            package_exe,
+            clear_cache,
+            provider,
+            model,
+        }) => {
+            commands::analyze::run(
+                db,
+                prompt,
                 report,
-                context,
+                theme,
+                package_exe,
+                clear_cache,
                 provider,
                 model,
-                base,
-                paths,
             )
             .await
         }
-        Some(Commands::Pentest { mode, report, declare_scope, provider, model }) => {
-            commands::pentest::run(mode, report, declare_scope, provider, model).await
+        Some(Commands::Pentest {
+            mode,
+            report,
+            declare_scope,
+            provider,
+            model,
+        }) => commands::pentest::run(mode, report, declare_scope, provider, model).await,
+        Some(Commands::Zeroday { dir, report, deep }) => commands::zeroday::run(dir, report, deep).await,
+        Some(Commands::Scan { dir, report, json }) => commands::scan::run(dir, report, json).await,
+        Some(Commands::Test { file }) => commands::test::run(file).await,
+        Some(Commands::Undo { commit, list }) => commands::undo::run(commit, list).await,
+        Some(Commands::Restore { file, id, list }) => commands::restore::run(file, id, list).await,
+        Some(Commands::Diff {
+            apply,
+            reject,
+            clear,
+        }) => commands::diff::run(apply, reject, clear).await,
+        Some(Commands::Ci {
+            dir,
+            skip_security,
+            skip_tests,
+            strict_security,
+            output,
+            github,
+        }) => {
+            commands::ci::run(
+                dir,
+                skip_security,
+                skip_tests,
+                strict_security,
+                output,
+                github,
+            )
+            .await
         }
-        Some(Commands::Zeroday { dir, report }) => {
-            commands::zeroday::run(dir, report).await
-        }
-        Some(Commands::Scan { dir, report, json }) => {
-            commands::scan::run(dir, report, json).await
-        }
-        Some(Commands::Test { file }) => {
-            commands::test::run(file).await
-        }
-        Some(Commands::Undo { commit, list }) => {
-            commands::undo::run(commit, list).await
-        }
-        Some(Commands::Restore { file, id, list }) => {
-            commands::restore::run(file, id, list).await
-        }
-        Some(Commands::Diff { apply, reject, clear }) => {
-            commands::diff::run(apply, reject, clear).await
-        }
-        Some(Commands::Ci { dir, skip_security, skip_tests, strict_security, output, github }) => {
-            commands::ci::run(dir, skip_security, skip_tests, strict_security, output, github).await
-        }
-        Some(Commands::RemoteShell) => {
-            commands::remote_shell::run().await
-        }
-        Some(Commands::Log) => {
-            commands::log::run().await
-        }
-        Some(Commands::Reset) => {
-            commands::reset::run().await
-        }
-        Some(Commands::License { subcmd }) => {
-            match subcmd {
-                LicenseCommands::Activate { key } => commands::license::run_activate(key).await,
-                LicenseCommands::Status => commands::license::run_status().await,
-                LicenseCommands::Deactivate => commands::license::run_deactivate().await,
-            }
-        }
-        Some(Commands::Update) => {
-            commands::update::run().await
-        }
-        Some(Commands::Stats) => {
-            commands::stats::run().await
-        }
-        Some(Commands::Uninstall { yes }) => {
-            commands::uninstall::run(yes).await
-        }
-        None => {
-            commands::interactive::run().await
-        }
+        Some(Commands::Log) => commands::log::run().await,
+        Some(Commands::Reset) => commands::reset::run().await,
+        Some(Commands::License { subcmd }) => match subcmd {
+            LicenseCommands::Activate { key } => commands::license::run_activate(key).await,
+            LicenseCommands::Status => commands::license::run_status().await,
+            LicenseCommands::Deactivate => commands::license::run_deactivate().await,
+        },
+        Some(Commands::Update) => commands::update::run().await,
+        Some(Commands::Ide { path }) => commands::ide::run(path.as_deref()).await,
+        Some(Commands::Stats) => commands::stats::run().await,
+        Some(Commands::Uninstall { yes }) => commands::uninstall::run(yes).await,
+        None => commands::interactive::run().await,
     };
 
     if let Err(err) = result {

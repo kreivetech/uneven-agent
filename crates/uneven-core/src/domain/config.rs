@@ -1,6 +1,8 @@
 use std::sync::OnceLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use catfive::{schema, string, number, Validator};
+use crate::domain::UnevenError;
 
 pub static PROJECT_ROOT: OnceLock<String> = OnceLock::new();
 
@@ -207,39 +209,6 @@ pub struct NotificationsConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct RemoteShellHttpsConfig {
-    pub cert: String,
-    pub key: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct RemoteShellRateLimit {
-    #[serde(alias = "requests_per_minute")]
-    pub requests_per_minute: Option<u32>,
-    pub burst: Option<u32>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct RemoteShellCors {
-    #[serde(alias = "allowed_origins")]
-    pub allowed_origins: Option<Vec<String>>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct RemoteShellConfig {
-    pub port: u16,
-    pub secret: Option<String>,
-    pub https: Option<RemoteShellHttpsConfig>,
-    #[serde(alias = "rate_limit")]
-    pub rate_limit: Option<RemoteShellRateLimit>,
-    pub cors: Option<RemoteShellCors>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct DataSecurityConfig {
     pub mask: Option<Vec<String>>,
     pub block: Option<Vec<String>>,
@@ -278,8 +247,6 @@ pub struct UnevenConfig {
     pub notifications: Option<NotificationsConfig>,
     #[serde(default)]
     pub security: DataSecurityConfig,
-    #[serde(alias = "remote_shell")]
-    pub remote_shell: Option<RemoteShellConfig>,
     pub proactive: Option<ProactiveConfig>,
     pub zeroday: Option<ZeroDayConfig>,
     pub skills: Option<String>,
@@ -308,7 +275,85 @@ impl UnevenConfig {
         } else {
             brain.temperature = 0.2;
         }
+
+        let real_cap = crate::infrastructure::llm::get_default_max_output_tokens(&brain.provider, &brain.model);
+        if brain.max_tokens <= 2048 {
+            brain.max_tokens = real_cap;
+        } else {
+            brain.max_tokens = brain.max_tokens.max(real_cap);
+        }
         
         brain
+    }
+
+    pub fn validate_schema(&self) -> Result<(), UnevenError> {
+        let brain_schema = schema::<BrainConfig>()
+            .field("provider", |b| &b.provider, string().min(1))
+            .field("model", |b| &b.model, string().min(1))
+            .field("temperature", |b| &b.temperature, number().min(0.0).max(2.0));
+
+        brain_schema.validate(&self.brain)
+            .map_err(|e| UnevenError::ConfigError(format!("Invalid brain config: {:?}", e)))?;
+
+        if let Some(ref brains) = self.brains {
+            for b in brains {
+                brain_schema.validate(b)
+                    .map_err(|e| UnevenError::ConfigError(format!("Invalid secondary brain config: {:?}", e)))?;
+            }
+        }
+
+        if let Some(url) = self.notifications.as_ref().and_then(|n| n.webhook_url.as_ref()) {
+            string().url().validate(url)
+                .map_err(|e| UnevenError::ConfigError(format!("Invalid notifications webhook_url: {:?}", e)))?;
+        }
+
+        if let Some(urls) = self.knowledge.as_ref().and_then(|k| k.urls.as_ref()) {
+            let url_val = string().url();
+            for u in urls {
+                url_val.validate(u)
+                    .map_err(|e| UnevenError::ConfigError(format!("Invalid knowledge url '{}': {:?}", u, e)))?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_uneven_config_schema_validation() {
+        let mut config = UnevenConfig::default();
+        config.brain.provider = "gemini".to_string();
+        config.brain.model = "gemini-2.5-pro".to_string();
+        config.brain.temperature = 0.5;
+
+        assert!(config.validate_schema().is_ok());
+
+        // Invalid temperature out of bounds
+        config.brain.temperature = 5.0;
+        assert!(config.validate_schema().is_err());
+
+        // Invalid empty provider
+        config.brain.temperature = 0.5;
+        config.brain.provider = "".to_string();
+        assert!(config.validate_schema().is_err());
+
+        // Invalid webhook url
+        config.brain.provider = "gemini".to_string();
+        config.notifications = Some(NotificationsConfig {
+            webhook_url: Some("not-a-valid-url".to_string()),
+            ..Default::default()
+        });
+        assert!(config.validate_schema().is_err());
+
+        // Valid webhook url
+        config.notifications = Some(NotificationsConfig {
+            webhook_url: Some("https://hooks.slack.com/services/test".to_string()),
+            ..Default::default()
+        });
+        assert!(config.validate_schema().is_ok());
     }
 }

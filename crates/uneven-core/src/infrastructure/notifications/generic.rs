@@ -25,11 +25,10 @@ impl WebhookFormatter for GenericFormatter {
             }
         });
 
-        if let Some(ref fix_applied) = payload.fix_applied {
-            if let Some(obj) = res.as_object_mut() {
+        if let Some(ref fix_applied) = payload.fix_applied
+            && let Some(obj) = res.as_object_mut() {
                 obj.insert("fix".to_string(), json!(fix_applied));
             }
-        }
 
         res
     }

@@ -84,8 +84,8 @@ impl KnowledgeIndexer {
                 let is_real_dir = !file_type.is_symlink() && file_type.is_dir();
                 if is_real_dir {
                     queue.push_back(path);
-                } else if file_type.is_file() && loader.is_supported(&path) {
-                    if let Some(path_str) = path.to_str() {
+                } else if file_type.is_file() && loader.is_supported(&path)
+                    && let Some(path_str) = path.to_str() {
                         if low_cpu_mode {
                             tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
                         }
@@ -94,7 +94,6 @@ impl KnowledgeIndexer {
                         stats.disk_size += doc.content.len() as u64;
                         on_doc(doc)?;
                     }
-                }
             }
         }
 

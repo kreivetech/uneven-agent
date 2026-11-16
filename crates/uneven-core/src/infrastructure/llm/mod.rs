@@ -3,15 +3,18 @@
 //! Handles local and external LLM inference, embedding generation,
 //! and routing between different providers.
 
-pub mod inference;
+pub mod downloader;
 pub mod embeddings;
-pub mod providers;
-pub mod pricing;
 pub mod history_manager;
+pub mod inference;
+pub mod pricing;
+pub mod providers;
+
+pub use downloader::{download_file, ensure_local_model_files, is_local_model_downloaded};
 
 use crate::UnevenError;
-use serde::{Deserialize, Serialize};
 use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
 
 pub static LLM_POOL: Lazy<std::sync::RwLock<Option<rayon::ThreadPool>>> =
     Lazy::new(|| std::sync::RwLock::new(None));
@@ -56,17 +59,57 @@ pub struct LlmResponse {
 /// to avoid exceeding clippy's `too_many_arguments` limit and to make call
 /// sites self-documenting.
 pub struct InferParams {
-    pub model:          String,
-    pub threads:        u32,
-    pub max_tokens:     usize,
-    pub temperature:    f64,
+    pub model: String,
+    pub threads: u32,
+    pub max_tokens: usize,
+    pub temperature: f64,
     pub repeat_penalty: f32,
-    pub max_context:    usize,
-    pub grammar:        Option<String>,
-    pub provider:       Option<String>,
-    pub system:         Option<String>,
-    pub history:        Option<Vec<(String, String)>>,
+    pub max_context: usize,
+    pub grammar: Option<String>,
+    pub provider: Option<String>,
+    pub system: Option<String>,
+    pub history: Option<Vec<(String, String)>>,
 }
+
+/// Returns the true native maximum output tokens supported by each provider and model.
+pub fn get_default_max_output_tokens(provider: &str, model: &str) -> usize {
+    let p = provider.to_lowercase();
+    let m = model.to_lowercase();
+    match p.as_str() {
+        "gemini" => {
+            if m.contains("2.5") || m.contains("2.0") || m.contains("3.5") {
+                65536
+            } else {
+                8192
+            }
+        }
+        "anthropic" | "claude" => {
+            if m.contains("3-7") || m.contains("3.7") || m.contains("4") {
+                64000
+            } else if m.contains("3-5") || m.contains("3.5") {
+                8192
+            } else {
+                4096
+            }
+        }
+        "openai" => {
+            if m.contains("o1") || m.contains("o3") {
+                100000
+            } else if m.contains("gpt-4o") || m.contains("gpt-5") {
+                16384
+            } else {
+                4096
+            }
+        }
+        "deepseek" => 8192,
+        "groq" => 8192,
+        "mistral" => 8192,
+        "ollama" => 8192,
+        "local" => 4096,
+        _ => 8192,
+    }
+}
+
 
 /// Initialize LLM module.
 ///
@@ -76,15 +119,19 @@ pub struct InferParams {
 pub async fn init(provider: &str, model: &str, threads: u32) -> Result<(), UnevenError> {
     let mut n = threads.max(1);
     let detector = crate::infrastructure::utils::hardware_detector::HardwareDetector::new();
-    if let Ok(info) = detector.detect_system() {
-        if info.is_weak_system {
+    if let Ok(info) = detector.detect_system()
+        && info.is_weak_system {
             n = n.min(3);
         }
-    }
-    std::env::set_var("RAYON_NUM_THREADS", n.to_string());
+
+    // Set RAYON_NUM_THREADS environment variable to the dynamic threads count
+    unsafe { std::env::set_var("RAYON_NUM_THREADS", n.to_string()) };
 
     // Initialize custom LLM thread pool with the dynamic threads count
-    match rayon::ThreadPoolBuilder::new().num_threads(n as usize).build() {
+    match rayon::ThreadPoolBuilder::new()
+        .num_threads(n as usize)
+        .build()
+    {
         Ok(pool) => {
             let mut guard = LLM_POOL.write().unwrap();
             *guard = Some(pool);
@@ -95,7 +142,12 @@ pub async fn init(provider: &str, model: &str, threads: u32) -> Result<(), Uneve
         }
     }
 
-    tracing::info!("Initializing LLM module (provider={}, model={}, threads={})", provider, model, n);
+    tracing::info!(
+        "Initializing LLM module (provider={}, model={}, threads={})",
+        provider,
+        model,
+        n
+    );
 
     if provider == "local" {
         embeddings::init_embeddings().await?;
@@ -103,7 +155,8 @@ pub async fn init(provider: &str, model: &str, threads: u32) -> Result<(), Uneve
             Ok(()) => tracing::info!("LLM: local model '{}' loaded", model),
             Err(UnevenError::LlmError(ref msg)) if msg.contains("not found") => {
                 tracing::warn!(
-                    "LLM: model '{}' not found — run `uneven init` to download it.", model
+                    "LLM: model '{}' not found — run `uneven init` to download it.",
+                    model
                 );
             }
             Err(e) => return Err(e),
@@ -150,17 +203,15 @@ pub async fn infer(prompt: &str) -> Result<LlmResponse, UnevenError> {
     tracing::info!("Running LLM inference (prompt len={})", prompt.len());
 
     let (content, tokens_used) = inference::run_inference(
-        prompt,
-        512,
-        0.0,        // greedy — deterministic
-        None,       // top_p off
-        1.1,        // mild repetition penalty
-        2048,       // 2 k context window
+        prompt, 512, 0.0,  // greedy — deterministic
+        None, // top_p off
+        1.1,  // mild repetition penalty
+        2048, // 2 k context window
         None,
-    ).await?;
+    )
+    .await?;
 
-    let model = inference::loaded_model_name()
-        .unwrap_or_else(|| "local".to_string());
+    let model = inference::loaded_model_name().unwrap_or_else(|| "local".to_string());
     let prompt_tokens = (prompt.len() as f64 / 4.0).ceil() as usize;
 
     let project_root = crate::infrastructure::config::loader::find_project_root(None);
@@ -190,7 +241,10 @@ pub async fn infer_with_params(
     prompt: &str,
     params: &InferParams,
 ) -> Result<LlmResponse, UnevenError> {
-    let provider_str = params.provider.clone().unwrap_or_else(|| "local".to_string());
+    let provider_str = params
+        .provider
+        .clone()
+        .unwrap_or_else(|| "local".to_string());
     let provider = providers::Provider::from_string(&provider_str)?;
 
     if provider != providers::Provider::Local {
@@ -202,13 +256,23 @@ pub async fn infer_with_params(
             params.history.as_deref(),
             params.max_tokens,
             params.temperature,
-        ).await?;
+        )
+        .await?;
         let system_len = params.system.as_ref().map_or(0, |s| s.len());
-        let prompt_tokens = resp.prompt_tokens.unwrap_or_else(|| ((prompt.len() + system_len) as f64 / 4.0).ceil() as usize);
-        let completion_tokens = resp.completion_tokens.unwrap_or_else(|| (resp.content.len() as f64 / 4.0).ceil() as usize);
+        let prompt_tokens = resp
+            .prompt_tokens
+            .unwrap_or_else(|| ((prompt.len() + system_len) as f64 / 4.0).ceil() as usize);
+        let completion_tokens = resp
+            .completion_tokens
+            .unwrap_or_else(|| (resp.content.len() as f64 / 4.0).ceil() as usize);
 
         let project_root = crate::infrastructure::config::loader::find_project_root(None);
-        let _ = pricing::register_call(&project_root, &params.model, prompt_tokens, completion_tokens);
+        let _ = pricing::register_call(
+            &project_root,
+            &params.model,
+            prompt_tokens,
+            completion_tokens,
+        );
 
         return Ok(LlmResponse {
             content: resp.content,
@@ -228,8 +292,12 @@ pub async fn infer_with_params(
     tracing::info!(
         "Running LLM inference with params: model={}, max_tokens={}, \
          threads={}, temperature={}, repeat_penalty={}, max_context={}",
-        params.model, params.max_tokens, params.threads,
-        params.temperature, params.repeat_penalty, params.max_context
+        params.model,
+        params.max_tokens,
+        params.threads,
+        params.temperature,
+        params.repeat_penalty,
+        params.max_context
     );
 
     // Load model if different from current — warn if not found
@@ -242,11 +310,15 @@ pub async fn infer_with_params(
     }
 
     let (mut content, tokens_used) = inference::run_inference(
-        prompt, params.max_tokens,
-        params.temperature, None,
-        params.repeat_penalty, params.max_context,
+        prompt,
+        params.max_tokens,
+        params.temperature,
+        None,
+        params.repeat_penalty,
+        params.max_context,
         params.grammar.clone(),
-    ).await?;
+    )
+    .await?;
 
     if params.model.to_lowercase().contains("deepseek") {
         content = inference::chat_template::strip_thinking_tokens(&content);
@@ -283,7 +355,10 @@ pub async fn infer_with_params_streaming(
     params: &InferParams,
     on_token: impl Fn(String) + Send + Sync + 'static,
 ) -> Result<LlmResponse, UnevenError> {
-    let provider_str = params.provider.clone().unwrap_or_else(|| "local".to_string());
+    let provider_str = params
+        .provider
+        .clone()
+        .unwrap_or_else(|| "local".to_string());
     let provider = providers::Provider::from_string(&provider_str)?;
 
     if provider != providers::Provider::Local {
@@ -296,13 +371,23 @@ pub async fn infer_with_params_streaming(
             params.max_tokens,
             params.temperature,
             on_token,
-        ).await?;
+        )
+        .await?;
         let system_len = params.system.as_ref().map_or(0, |s| s.len());
-        let prompt_tokens = resp.prompt_tokens.unwrap_or_else(|| ((prompt.len() + system_len) as f64 / 4.0).ceil() as usize);
-        let completion_tokens = resp.completion_tokens.unwrap_or_else(|| (resp.content.len() as f64 / 4.0).ceil() as usize);
+        let prompt_tokens = resp
+            .prompt_tokens
+            .unwrap_or_else(|| ((prompt.len() + system_len) as f64 / 4.0).ceil() as usize);
+        let completion_tokens = resp
+            .completion_tokens
+            .unwrap_or_else(|| (resp.content.len() as f64 / 4.0).ceil() as usize);
 
         let project_root = crate::infrastructure::config::loader::find_project_root(None);
-        let _ = pricing::register_call(&project_root, &params.model, prompt_tokens, completion_tokens);
+        let _ = pricing::register_call(
+            &project_root,
+            &params.model,
+            prompt_tokens,
+            completion_tokens,
+        );
 
         return Ok(LlmResponse {
             content: resp.content,
@@ -321,24 +406,33 @@ pub async fn infer_with_params_streaming(
 
     tracing::info!(
         "Running streaming LLM inference: model={}, max_tokens={}, temperature={}",
-        params.model, params.max_tokens, params.temperature
+        params.model,
+        params.max_tokens,
+        params.temperature
     );
 
     match inference::load_model(&params.model, params.threads).await {
         Ok(()) => {}
         Err(UnevenError::LlmError(ref msg)) if msg.contains("not found") => {
-            tracing::warn!("Model '{}' not found — streaming inference unavailable", params.model);
+            tracing::warn!(
+                "Model '{}' not found — streaming inference unavailable",
+                params.model
+            );
         }
         Err(e) => return Err(e),
     }
 
     let (mut content, tokens_used) = inference::run_inference_streaming(
-        prompt, params.max_tokens,
-        params.temperature, None,
-        params.repeat_penalty, params.max_context,
+        prompt,
+        params.max_tokens,
+        params.temperature,
+        None,
+        params.repeat_penalty,
+        params.max_context,
         params.grammar.clone(),
         on_token,
-    ).await?;
+    )
+    .await?;
 
     if params.model.to_lowercase().contains("deepseek") {
         content = inference::chat_template::strip_thinking_tokens(&content);

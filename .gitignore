@@ -1,20 +1,69 @@
 # Rust
 target/
 Cargo.lock.bak
-
+*.node
 
 # Uneven Agent
 .uneven/
-.uneven/
-uneven/
+/uneven/
+!snap/local/uneven/
 /snapshots/
 *.log.md
 
+# OS
+.DS_Store
+Thumbs.db
 
+# Agents
+.claude
+.antigravitycli
 
 # Misc
 # .github/
 .env
 .tmp
 *.tmp
+test-project/
+prebuilds/
+releases/
+smoke-sandbox/
+cloud-tests/
+uneven-reports/
+AI_DIAGNOSTIC_PLAN.md
+UNEVEN_FOR_LLM_AGENTS.md
+UNEVEN_LLMS_TXT_ADDENDUM.md
+UNEVEN_SECURITY_CONTEXT.md
+UNEVEN_SESSION_PROTOCOL.md
+UNEVEN_WRITE_LOCK_PROTOCOL.md
 
+# Test artifacts
+coverage/
+lock_test_output.txt
+test_output.txt
+
+# Internal Logic Documentation
+cloudflare-worker.ts
+cloudflare-worker.js
+schema.sql
+uneven-contexts/
+agentic_file_recovery_design.md
+UI_SPECS.md
+scratch/
+run_with_monitor.sh
+models/
+
+# Legacy / Obsolete files
+obsolete/
+bin/
+types/
+
+# Benchmarks
+linux/
+benchmark_*.log
+
+# Snap build artifacts
+overlay/
+parts/
+prime/
+stage/
+*.snap

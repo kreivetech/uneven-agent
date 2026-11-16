@@ -64,8 +64,8 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
     {
         let lines: Vec<&str> = content.lines().collect();
         let line_idx = error.line.saturating_sub(1);
-        if let Some(&original_line) = lines.get(line_idx) {
-            if original_line.contains("func ") && original_line.contains("()") {
+        if let Some(&original_line) = lines.get(line_idx)
+            && original_line.contains("func ") && original_line.contains("()") {
                 return Some(FixSuggestion {
                     file: error.file.clone(),
                     line: error.line,
@@ -80,7 +80,6 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
                     suggested_fix: "Injected 'c *gin.Context' into function parameters".to_string(),
                 });
             }
-        }
     }
 
     None

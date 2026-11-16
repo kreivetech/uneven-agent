@@ -28,27 +28,24 @@ impl TestRunner {
 
         let has_package = |pkg: &str| -> bool {
             let pkg_json_path = root.join("package.json");
-            if let Ok(content) = fs::read_to_string(pkg_json_path) {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Ok(content) = fs::read_to_string(pkg_json_path)
+                && let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
                     let dep = json.get("dependencies").and_then(|d| d.get(pkg)).is_some();
                     let dev_dep = json.get("devDependencies").and_then(|d| d.get(pkg)).is_some();
                     return dep || dev_dep;
                 }
-            }
             false
         };
 
         let has_script = |keyword: &str| -> bool {
             let pkg_json_path = root.join("package.json");
-            if let Ok(content) = fs::read_to_string(pkg_json_path) {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                    if let Some(scripts) = json.get("scripts").and_then(|s| s.as_object()) {
+            if let Ok(content) = fs::read_to_string(pkg_json_path)
+                && let Ok(json) = serde_json::from_str::<serde_json::Value>(&content)
+                    && let Some(scripts) = json.get("scripts").and_then(|s| s.as_object()) {
                         return scripts.values().any(|val| {
                             val.as_str().map(|s| s.contains(keyword)).unwrap_or(false)
                         });
                     }
-                }
-            }
             false
         };
 

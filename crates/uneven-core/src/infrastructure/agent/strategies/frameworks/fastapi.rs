@@ -40,8 +40,8 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
 
         let lines: Vec<&str> = content.lines().collect();
         let line_idx = error.line.saturating_sub(1);
-        if let Some(&original_line) = lines.get(line_idx) {
-            if original_line.contains("def ") && original_line.contains("(") {
+        if let Some(&original_line) = lines.get(line_idx)
+            && original_line.contains("def ") && original_line.contains("(") {
                 let replacement = original_line.replacen("(", &format!("({}, ", param_name), 1);
                 return Some(FixSuggestion {
                     file: error.file.clone(),
@@ -57,7 +57,6 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
                     suggested_fix: format!("Injected '{}' to your route handler function arguments", param_name),
                 });
             }
-        }
     }
 
     // 2. Missing async/await in path operation calling async code

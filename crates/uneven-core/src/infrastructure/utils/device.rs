@@ -19,14 +19,13 @@ pub fn get_or_create_device_id() -> String {
     let uneven_dir = PathBuf::from(home_dir).join(".uneven");
     let device_file = uneven_dir.join("device_id");
 
-    if device_file.exists() {
-        if let Ok(id) = fs::read_to_string(&device_file) {
+    if device_file.exists()
+        && let Ok(id) = fs::read_to_string(&device_file) {
             let trimmed = id.trim();
             if !trimmed.is_empty() {
                 return trimmed.to_string();
             }
         }
-    }
 
     let _ = fs::create_dir_all(&uneven_dir);
     let new_id = Uuid::new_v4().to_string();

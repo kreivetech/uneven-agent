@@ -12,5 +12,7 @@ pub mod reporting;
 pub mod config;
 pub mod utils;
 pub mod notifications;
+pub mod patch;
+pub mod translation;
 
 

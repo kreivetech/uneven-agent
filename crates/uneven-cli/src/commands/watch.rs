@@ -76,8 +76,8 @@ pub async fn run(
 
     // Webhook notifications check
     let mut notifier = None;
-    if let Some(ref notifications) = config.notifications {
-        if notifications.webhook_url.is_some() {
+    if let Some(ref notifications) = config.notifications
+        && notifications.webhook_url.is_some() {
             if license::check_team() {
                 notifier = Some(Arc::new(WebhookNotifier::new(notifications.clone())));
                 if let Some(ref url) = notifications.webhook_url {
@@ -87,7 +87,6 @@ pub async fn run(
                 println!("{}", style("  ⚠ webhookUrl is configured but requires Uneven Team — notifications disabled").yellow());
             }
         }
-    }
 
     let starting_frames = [
         format!("{} {}", style("⠋").cyan(), style(format!("Starting terminal watcher for: {}.  ", display_label)).dim()),
@@ -383,10 +382,9 @@ fn label_of_command(cmd: &str) -> String {
     if parts.len() >= 2 && parts[0] == "yarn" && !["add", "install", "remove", "upgrade", "dlx"].contains(&parts[1]) {
         return parts[1].to_string();
     }
-    if let Some(last) = parts.last() {
-        if let Some(name) = std::path::Path::new(last).file_name().and_then(|n| n.to_str()) {
+    if let Some(last) = parts.last()
+        && let Some(name) = std::path::Path::new(last).file_name().and_then(|n| n.to_str()) {
             return name.to_string();
         }
-    }
     "process".to_string()
 }

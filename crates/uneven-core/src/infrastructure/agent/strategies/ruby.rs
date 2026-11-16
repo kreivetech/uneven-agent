@@ -40,8 +40,8 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
         });
     }
 
-    if code_str == "NoMethodError" || error.message.contains("undefined method") {
-        if let Some(caps) = RE_RUBY_METHOD.captures(&error.message) {
+    if (code_str == "NoMethodError" || error.message.contains("undefined method"))
+        && let Some(caps) = RE_RUBY_METHOD.captures(&error.message) {
             let method = caps.get(1).map(|m| m.as_str()).unwrap_or("method");
             let receiver = caps.get(2).map(|m| m.as_str()).unwrap_or("object");
             let is_nil = receiver.contains("nil");
@@ -85,7 +85,6 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
                 }
             }
         }
-    }
 
     if code_str == "SyntaxError" || error.message.contains("SyntaxError") {
         return Some(FixSuggestion {
@@ -101,8 +100,8 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
         });
     }
 
-    if code_str == "LoadError" || error.message.contains("cannot load such file") {
-        if let Some(caps) = RE_RUBY_LOAD.captures(&error.message) {
+    if (code_str == "LoadError" || error.message.contains("cannot load such file"))
+        && let Some(caps) = RE_RUBY_LOAD.captures(&error.message) {
             let lib = caps.get(1).map(|m| m.as_str()).unwrap_or("library");
             let gem_name = lib.split('/').next().unwrap_or("gem-name");
             return Some(FixSuggestion {
@@ -117,7 +116,6 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
                 suggested_fix: format!("Run 'gem install {}' or add to Gemfile", gem_name),
             });
         }
-    }
 
     if code_str == "TypeError" || error.message.contains("TypeError") {
         return Some(FixSuggestion {

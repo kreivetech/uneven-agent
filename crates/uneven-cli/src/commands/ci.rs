@@ -324,9 +324,9 @@ async fn finish_ci(
     fs::write(&json_path, json_content)?;
     println!("  Report: {}", json_path);
 
-    if github {
-        if let Ok(summary_path) = std::env::var("GITHUB_STEP_SUMMARY") {
-            if !summary_path.is_empty() {
+    if github
+        && let Ok(summary_path) = std::env::var("GITHUB_STEP_SUMMARY")
+            && !summary_path.is_empty() {
                 let status_icon = if passed { "✅" } else { "❌" };
                 let mut rows = String::new();
                 for s in &steps {
@@ -360,8 +360,6 @@ async fn finish_ci(
                 use std::io::Write;
                 write!(file, "{}", content)?;
             }
-        }
-    }
 
     if !passed {
         drop(lock);

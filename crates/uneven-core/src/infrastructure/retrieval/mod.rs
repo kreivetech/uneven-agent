@@ -1,7 +1,7 @@
 //! Vector store and semantic retrieval module
 //!
 //! Persistence layout
-//!   .uneven/vectors.bin        — bincode store (default backend)
+//!   .uneven/vectors.bin        — postcard binary store (default backend)
 //!   .uneven/vectors.json        — legacy — migration only
 //!   .uneven/vectors.usearch    — HNSW graph   (vector-store backend)
 //!   .uneven/vectors.meta.bin   — doc metadata  (vector-store backend)

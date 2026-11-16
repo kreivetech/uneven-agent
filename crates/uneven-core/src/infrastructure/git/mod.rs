@@ -36,8 +36,8 @@ pub fn get_history(repo_path: &str, limit: usize) -> Result<Vec<GitCommit>, Unev
         .filter_map(|id| {
             let id = id.ok()?;
             let commit = repo.find_commit(id).ok()?;
-            let author = commit.author().name()?.to_string();
-            let message = commit.message()?.trim().to_string();
+            let author = commit.author().name().ok()?.to_string();
+            let message = commit.message().ok()?.trim().to_string();
             
             Some(GitCommit {
                 id: id.to_string(),
@@ -68,11 +68,10 @@ pub fn get_staged_diff(repo_path: &str) -> Result<GitDiff, UnevenError> {
     let mut patch = String::new();
     
     diff.print(git2::DiffFormat::Patch, |delta, _hunk, line| {
-        if let Some(path) = delta.new_file().path().and_then(|p| p.to_str()) {
-            if !files.contains(&path.to_string()) {
+        if let Some(path) = delta.new_file().path().and_then(|p| p.to_str())
+            && !files.contains(&path.to_string()) {
                 files.push(path.to_string());
             }
-        }
         
         let origin = line.origin();
         if origin == '+' || origin == '-' || origin == ' ' {
@@ -100,7 +99,7 @@ pub fn get_status(repo_path: &str) -> Result<Vec<String>, UnevenError> {
         .map_err(|e| UnevenError::GitError(format!("Failed to get statuses: {}", e)))?;
     
     let files = statuses.iter()
-        .filter_map(|entry| entry.path().map(|p| p.to_string()))
+        .filter_map(|entry| entry.path().ok().map(|p| p.to_string()))
         .collect();
     
     Ok(files)

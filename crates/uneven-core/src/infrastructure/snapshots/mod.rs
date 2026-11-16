@@ -64,7 +64,7 @@ impl SnapshotManager {
         // SHA256 Checksum
         let mut hasher = Sha256::new();
         hasher.update(&content);
-        let checksum = format!("{:x}", hasher.finalize());
+        let checksum: String = hasher.finalize().into_iter().map(|b| format!("{:02x}", b)).collect();
 
         let id = Uuid::new_v4().to_string();
         let timestamp = Utc::now();
@@ -117,7 +117,7 @@ impl SnapshotManager {
         // Verify checksum
         let mut hasher = Sha256::new();
         hasher.update(&content);
-        let checksum = format!("{:x}", hasher.finalize());
+        let checksum: String = hasher.finalize().into_iter().map(|b| format!("{:02x}", b)).collect();
 
         if checksum != snapshot.checksum {
             return Err(UnevenError::RetrievalError("Checksum mismatch - corrupted backup".into()));

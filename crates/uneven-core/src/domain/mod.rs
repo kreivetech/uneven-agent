@@ -25,8 +25,18 @@ pub mod event;
 pub mod watcher;
 pub mod session;
 pub mod consts;
+pub mod actions;
+pub mod pod;
+pub mod skills;
+pub mod markdown;
+pub mod dashboard_spec;
 
 // Re-exports
+pub use skills::*;
+pub use actions::*;
+pub use pod::*;
+pub use markdown::*;
+pub use dashboard_spec::*;
 pub use config::*;
 pub use database::*;
 pub use error::UnevenError;

@@ -10,13 +10,11 @@ fn clean_api_error_json(raw: &str) -> Option<String> {
     let json_str = &raw[start..=end];
     if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
         // Case 1: Array of objects (e.g. Gemini)
-        if let Some(arr) = val.as_array() {
-            if let Some(first) = arr.first() {
-                if let Some(msg) = first.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()) {
+        if let Some(arr) = val.as_array()
+            && let Some(first) = arr.first()
+                && let Some(msg) = first.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()) {
                     return Some(msg.to_string());
                 }
-            }
-        }
         // Case 2: Direct object (OpenAI / Claude / Provider compat)
         if let Some(msg) = val.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()) {
             return Some(msg.to_string());
@@ -38,7 +36,7 @@ pub fn sanitize_error_msg(raw: &str) -> String {
 
     // Fast-path friendly whitelist pre-check
     let friendly_re = Regex::new(
-        r"(?i)pro license|team license|requires uneven|policy violation|interrupted by user|not initialized|not a git repository|no relationships found|access restricted|file state has changed|license|lockout|webhook|insight|remoteshell|subagent|multi-agent"
+        r"(?i)pro license|team license|requires uneven|policy violation|interrupted by user|not initialized|not a git repository|no relationships found|access restricted|file state has changed|license|lockout|webhook|insight|subagent|multi-agent"
     ).unwrap();
 
     if raw.starts_with("[UE-") && friendly_re.is_match(raw) {
@@ -106,7 +104,7 @@ pub fn sanitize_error_msg(raw: &str) -> String {
 
     // 3. Final Fallback: Mask raw technical details unless it matches a friendly whitelist
     let friendly_re = Regex::new(
-        r"(?i)pro license|team license|requires uneven|policy violation|interrupted by user|not initialized|not a git repository|no relationships found|access restricted|file state has changed|license|lockout|webhook|insight|remoteshell|subagent|multi-agent"
+        r"(?i)pro license|team license|requires uneven|policy violation|interrupted by user|not initialized|not a git repository|no relationships found|access restricted|file state has changed|license|lockout|webhook|insight|subagent|multi-agent"
     ).unwrap();
 
     if raw.starts_with("[UE-") {
@@ -217,10 +215,10 @@ mod tests {
     }
 
     #[test]
-    fn test_sanitize_error_msg_whitelist_remoteshell() {
-        let raw = "[UE-02000001] remoteShell is not configured. Please use '/' in the interactive shell to configure settings.";
+    fn test_sanitize_error_msg_whitelist_license() {
+        let raw = "[UE-02000001] team license is required to activate this feature.";
         let sanitized = sanitize_error_msg(raw);
-        assert_eq!(sanitized, "[UE-02000001] remoteShell is not configured. Please use '/' in the interactive shell to configure settings.");
+        assert_eq!(sanitized, "[UE-02000001] team license is required to activate this feature.");
     }
 
     #[test]

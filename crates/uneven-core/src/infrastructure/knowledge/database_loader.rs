@@ -48,7 +48,7 @@ impl DatabaseAnalyst {
         } else if url.starts_with("redis") {
             let client = redis::Client::open(url)
                 .map_err(|e| UnevenError::KnowledgeError(format!("Redis connect failed: {}", e)))?;
-            let conn = client.get_multiplexed_tokio_connection().await
+            let conn = client.get_multiplexed_async_connection().await
                 .map_err(|e| UnevenError::KnowledgeError(format!("Redis connection failed: {}", e)))?;
             self.connection = Some(DbConnection::Redis(conn));
         } else {
@@ -83,9 +83,9 @@ impl DatabaseAnalyst {
             DbConnection::Mongo(client) => {
                 let db = client.default_database()
                     .ok_or_else(|| UnevenError::KnowledgeError("No default database in MongoDB URL".to_string()))?;
-                let collections = db.list_collection_names().await
-                    .map_err(|e| UnevenError::KnowledgeError(format!("MongoDB list collections failed: {}", e)))?;
-                collections
+                
+                db.list_collection_names().await
+                    .map_err(|e| UnevenError::KnowledgeError(format!("MongoDB list collections failed: {}", e)))?
             }
             DbConnection::Redis(conn) => {
                 let mut conn = conn.clone();
@@ -97,7 +97,12 @@ impl DatabaseAnalyst {
 
         let filtered: Vec<String> = raw_tables
             .into_iter()
-            .filter(|t| self.allowed_tables.contains(t))
+            .filter(|t| {
+                if self.security.is_blocked_table(t) {
+                    return false;
+                }
+                self.allowed_tables.is_empty() || self.allowed_tables.contains(t)
+            })
             .collect();
         Ok(filtered)
     }
@@ -105,7 +110,12 @@ impl DatabaseAnalyst {
     pub async fn introspect(&self, only_tables: Option<Vec<String>>) -> Result<Vec<crate::domain::database::TableSchema>, UnevenError> {
         let tables = if let Some(t) = only_tables {
             t.into_iter()
-                .filter(|x| self.allowed_tables.contains(x))
+                .filter(|x| {
+                    if self.security.is_blocked_table(x) {
+                        return false;
+                    }
+                    self.allowed_tables.is_empty() || self.allowed_tables.contains(x)
+                })
                 .collect()
         } else {
             self.list_tables().await?
@@ -152,7 +162,7 @@ impl DatabaseAnalyst {
         match conn {
             DbConnection::Sqlite(pool) => {
                 let sql = format!("PRAGMA table_info(\"{}\")", table.replace("\"", "\"\""));
-                let rows = sqlx::query(&sql).fetch_all(pool).await
+                let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch_all(pool).await
                     .map_err(|e| UnevenError::KnowledgeError(format!("SQLite columns failed: {}", e)))?;
                 
                 use sqlx::{Row, Column};
@@ -194,7 +204,7 @@ impl DatabaseAnalyst {
         match conn {
             DbConnection::Sqlite(pool) => {
                 let sql = format!("PRAGMA foreign_key_list(\"{}\")", table.replace("\"", "\"\""));
-                let rows = sqlx::query(&sql).fetch_all(pool).await
+                let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch_all(pool).await
                     .map_err(|e| UnevenError::KnowledgeError(format!("SQLite foreign keys failed: {}", e)))?;
                 
                 use sqlx::{Row, Column};
@@ -239,7 +249,7 @@ impl DatabaseAnalyst {
         match conn {
             DbConnection::Sqlite(pool) => {
                 let sql = format!("SELECT COUNT(*) FROM \"{}\"", table.replace("\"", "\"\""));
-                let row: (i64,) = sqlx::query_as(&sql).fetch_one(pool).await
+                let row: (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(sql)).fetch_one(pool).await
                     .map_err(|e| UnevenError::KnowledgeError(format!("SQLite count failed: {}", e)))?;
                 Ok(row.0)
             }
@@ -259,7 +269,7 @@ impl DatabaseAnalyst {
         let sql_trimmed = sql.trim().trim_end_matches(';');
         let sql_upper = sql_trimmed.to_uppercase();
         let final_sql = if !sql_upper.contains("LIMIT") {
-            format!("{} LIMIT 1", sql_trimmed)
+            format!("{} LIMIT 100", sql_trimmed)
         } else {
             sql_trimmed.to_string()
         };
@@ -267,7 +277,7 @@ impl DatabaseAnalyst {
         // 3. Execute
         let rows: Vec<serde_json::Value> = match conn {
             DbConnection::Sqlite(pool) => {
-                let sqlx_rows = sqlx::query(&final_sql).fetch_all(pool).await
+                let sqlx_rows = sqlx::query(sqlx::AssertSqlSafe(final_sql.clone())).fetch_all(pool).await
                     .map_err(|e| UnevenError::KnowledgeError(format!("SQLite query failed: {}", e)))?;
                 sqlx_rows.into_iter().map(|row| {
                     let mut map = serde_json::Map::new();
@@ -291,7 +301,7 @@ impl DatabaseAnalyst {
                 }).collect()
             }
             DbConnection::Postgres(pool) => {
-                let sqlx_rows = sqlx::query(&final_sql).fetch_all(pool).await
+                let sqlx_rows = sqlx::query(sqlx::AssertSqlSafe(final_sql.clone())).fetch_all(pool).await
                     .map_err(|e| UnevenError::KnowledgeError(format!("Postgres query failed: {}", e)))?;
                 sqlx_rows.into_iter().map(|row| {
                     let mut map = serde_json::Map::new();
@@ -315,7 +325,7 @@ impl DatabaseAnalyst {
                 }).collect()
             }
             DbConnection::Mysql(pool) => {
-                let sqlx_rows = sqlx::query(&final_sql).fetch_all(pool).await
+                let sqlx_rows = sqlx::query(sqlx::AssertSqlSafe(final_sql)).fetch_all(pool).await
                     .map_err(|e| UnevenError::KnowledgeError(format!("MySQL query failed: {}", e)))?;
                 sqlx_rows.into_iter().map(|row| {
                     let mut map = serde_json::Map::new();

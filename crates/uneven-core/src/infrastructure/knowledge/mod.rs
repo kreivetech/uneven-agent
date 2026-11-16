@@ -22,6 +22,14 @@ pub mod dependency_graph;
 pub mod incremental_index;
 pub mod prompts;
 pub mod parser;
+pub mod analysis_service;
+pub mod context_builder;
+
+pub use context_builder::{
+    is_binary_file, load_and_format_file, load_and_format_web_page, parse_all_need_file_tags,
+    parse_all_web_search_tags, parse_all_web_url_tags, run_and_format_web_search,
+    sync_external_project,
+};
 
 pub use document_loader::DocumentLoader;
 pub use web_loader::{WebScraper, WebDocument};
@@ -30,6 +38,11 @@ pub use dependency_graph::DependencyGraph;
 pub use incremental_index::IncrementalIndex;
 pub use database_loader::DatabaseAnalyst;
 pub use parser::{ResponseParser, GeneratedQuery};
+pub use analysis_service::{
+    AnalysisService, AnalysisResult, AnalystJob, AnalystTask,
+    format_schema_for_ai, format_schema_for_suggestion, format_samples_for_ai,
+    build_prompt_rules, is_safe_query, suggest_analyses, suggest_analyses_sync,
+};
 
 use crate::UnevenError;
 use serde::{Deserialize, Serialize};

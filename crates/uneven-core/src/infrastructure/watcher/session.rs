@@ -146,11 +146,10 @@ impl WatcherSession {
         }
         // Also watch config file if present
         let config_json = crate::infrastructure::utils::paths::project_cache_dir(&self.project_root).join("config.json");
-        if config_json.exists() {
-            if let Some(p) = config_json.to_str() {
+        if config_json.exists()
+            && let Some(p) = config_json.to_str() {
                 file_watcher.watch(p).ok();
             }
-        }
         self.file_watcher = Some(file_watcher);
 
         // 4. Central event loop
@@ -436,8 +435,8 @@ impl WatcherSession {
                                                     }
                                                 }),
                                             }).ok();
-                                        } else if !fix_res.reverted {
-                                            if let Some(pending_id) = fix_res.pending_id {
+                                        } else if !fix_res.reverted
+                                            && let Some(pending_id) = fix_res.pending_id {
                                                 event_tx_clone.send(UnevenEvent {
                                                     r#type: EventType::FixPending,
                                                     timestamp: Utc::now(),
@@ -454,7 +453,6 @@ impl WatcherSession {
                                                     }),
                                                 }).ok();
                                             }
-                                        }
                                     }
 
                                     active_fixes_clone.lock().await.remove(&fix_key_clone);
@@ -504,11 +502,10 @@ fn label_of_command(cmd: &str) -> String {
     if parts.len() >= 2 && parts[0] == "yarn" && !["add", "install", "remove", "upgrade", "dlx"].contains(&parts[1]) {
         return parts[1].to_string();
     }
-    if let Some(last) = parts.last() {
-        if let Some(name) = Path::new(last).file_name().and_then(|n| n.to_str()) {
+    if let Some(last) = parts.last()
+        && let Some(name) = Path::new(last).file_name().and_then(|n| n.to_str()) {
             return name.to_string();
         }
-    }
     "process".to_string()
 }
 
@@ -536,8 +533,8 @@ fn should_ignore_path(path_str: &str, project_root: &Path, config: &UnevenConfig
         return true;
     }
 
-    if let Some(ref log_cfg) = config.log {
-        if let Some(ref log_p) = log_cfg.path {
+    if let Some(ref log_cfg) = config.log
+        && let Some(ref log_p) = log_cfg.path {
             let log_path_buf = PathBuf::from(log_p);
             let abs_log = if log_path_buf.is_absolute() {
                 log_path_buf
@@ -550,15 +547,12 @@ fn should_ignore_path(path_str: &str, project_root: &Path, config: &UnevenConfig
                 return true;
             }
 
-            if let Ok(abs_log_canon) = std::fs::canonicalize(&abs_log) {
-                if let Ok(path_canon) = std::fs::canonicalize(path) {
-                    if path_canon == abs_log_canon {
+            if let Ok(abs_log_canon) = std::fs::canonicalize(&abs_log)
+                && let Ok(path_canon) = std::fs::canonicalize(path)
+                    && path_canon == abs_log_canon {
                         return true;
                     }
-                }
-            }
         }
-    }
 
     false
 }

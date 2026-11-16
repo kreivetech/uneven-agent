@@ -210,12 +210,12 @@ impl IncrementalIndex {
         let content = fs::read(path)?;
         let mut hasher = Sha256::new();
         hasher.update(&content);
-        Ok(format!("{:x}", hasher.finalize()))
+        Ok(hasher.finalize().into_iter().map(|b| format!("{:02x}", b)).collect())
     }
 
     pub fn hash_buffer(buf: &[u8]) -> String {
         let mut hasher = Sha256::new();
         hasher.update(buf);
-        format!("{:x}", hasher.finalize())
+        hasher.finalize().into_iter().map(|b| format!("{:02x}", b)).collect()
     }
 }

@@ -6,3 +6,4 @@ pub mod test_runner;
 pub mod device;
 pub mod telemetry;
 pub mod formatter;
+pub mod markdown_cleaner;

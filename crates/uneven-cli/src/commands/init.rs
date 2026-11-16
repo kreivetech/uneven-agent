@@ -513,9 +513,9 @@ pub async fn ensure_workspace_initialized() -> Result<()> {
 
     // 3. Update .gitignore if needed
     let gitignore_path = root.join(".gitignore");
-    if gitignore_path.exists() {
-        if let Ok(content) = fs::read_to_string(&gitignore_path) {
-            if !content.contains(".uneven/") {
+    if gitignore_path.exists()
+        && let Ok(content) = fs::read_to_string(&gitignore_path)
+            && !content.contains(".uneven/") {
                 let mut new_content = content;
                 if !new_content.ends_with('\n') {
                     new_content.push('\n');
@@ -523,8 +523,6 @@ pub async fn ensure_workspace_initialized() -> Result<()> {
                 new_content.push_str("\n# Uneven cache and logs\n.uneven/\n");
                 let _ = fs::write(&gitignore_path, new_content);
             }
-        }
-    }
 
     // 4. Check and download embedding model files (BERT)
     let mut missing_embeddings = false;

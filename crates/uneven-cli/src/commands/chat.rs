@@ -1,24 +1,22 @@
-use anyhow::Result;
+use super::resource_guardian::ResourceGuardian;
 use crate::ui::truecolor;
+use anyhow::Result;
 use std::io::{self, Write};
 use uneven_core::infrastructure::config::loader;
+use uneven_core::infrastructure::llm::inference::chat_template::{apply_template, detect_template};
+use uneven_core::infrastructure::llm::{
+    infer_with_params_streaming, init as init_llm, InferParams,
+};
 use uneven_core::infrastructure::security::laws;
 use uneven_core::infrastructure::security::SafetyGuard;
-use uneven_core::infrastructure::llm::inference::chat_template::{
-    detect_template, apply_template,
-};
-use uneven_core::infrastructure::llm::{
-    InferParams, init as init_llm, infer_with_params_streaming,
-};
-use super::resource_guardian::ResourceGuardian;
 
 pub const MAX_HISTORY_TURNS: usize = 10;
 
 pub fn print_welcome(version: &str, brain: &str) {
-    let line1 = format!("◈  U N E V E N   A I   v{}", version);
-    let line2 = "Agent: Snatchy (Senior Engineer)".to_string();
+    let line1 = format!("◈  U N E V E N   A G E N T   v{}", version);
+    let line2 = "Agent: (Senior Engineer)".to_string();
     let line3 = format!("Brain: {}", brain);
-    
+
     let bright_color = |s: &str| truecolor(s, 208, 232, 255);
     let dim_color = |s: &str| truecolor(s, 107, 122, 150);
 
@@ -29,14 +27,11 @@ pub fn print_welcome(version: &str, brain: &str) {
     println!();
 }
 
-pub async fn run(
-    provider_opt: Option<String>,
-    model_opt: Option<String>,
-) -> Result<()> {
+pub async fn run(provider_opt: Option<String>, model_opt: Option<String>) -> Result<()> {
     let root = loader::find_project_root(None);
     let config = loader::load_config(&root)?;
     let mut brain = config.get_brain_for_command("chat");
-    
+
     if let Some(ref p) = provider_opt {
         brain.provider = p.clone();
     }
@@ -52,7 +47,15 @@ pub async fn run(
     print_welcome(version, &active_brain);
 
     println!("\n\n\n\n");
-    println!("{}", truecolor("  How can I help you today? (type \"help\" or \"exit\")", 107, 122, 150));
+    println!(
+        "{}",
+        truecolor(
+            "  How can I help you today? (type \"help\" or \"exit\")",
+            107,
+            122,
+            150
+        )
+    );
     println!();
 
     let mut history: Vec<(String, String)> = Vec::new();
@@ -78,14 +81,21 @@ pub async fn run(
         }
 
         if question.to_lowercase() == "help" {
-            println!("{}", truecolor("  Available commands: help, exit, quit", 107, 122, 150));
+            println!(
+                "{}",
+                truecolor("  Available commands: help, exit, quit", 107, 122, 150)
+            );
             println!();
             continue;
         }
 
         // Validate intent using SafetyGuard
         if let Err(err) = safety.validate_intent(question) {
-            println!("\n{} {}", crate::ui::truecolor_bold("⚠️ [SECURITY POLICY]:", 255, 107, 53), err);
+            println!(
+                "\n{} {}",
+                crate::ui::truecolor_bold("⚠️ [SECURITY POLICY]:", 255, 107, 53),
+                err
+            );
             println!();
             continue;
         }
@@ -97,7 +107,7 @@ pub async fn run(
         std::io::stdout().flush()?;
 
         let system_instructions = laws::get_context("chat");
-        
+
         let mut prompt_to_use = question.to_string();
         let mut system_instructions_to_use = system_instructions.clone();
 
@@ -113,18 +123,35 @@ pub async fn run(
         }
 
         let chat_template = detect_template(&brain.model);
-        let chat_history: Vec<uneven_core::infrastructure::llm::inference::chat_template::ChatTurn> = history.iter().map(|(r, c)| {
-            uneven_core::infrastructure::llm::inference::chat_template::ChatTurn {
-                role: r.clone(),
-                content: c.clone(),
-            }
-        }).collect();
-        let formatted_prompt = apply_template(&chat_template, &system_instructions_to_use, &chat_history, &prompt_to_use);
+        let chat_history: Vec<
+            uneven_core::infrastructure::llm::inference::chat_template::ChatTurn,
+        > = history
+            .iter()
+            .map(
+                |(r, c)| uneven_core::infrastructure::llm::inference::chat_template::ChatTurn {
+                    role: r.clone(),
+                    content: c.clone(),
+                },
+            )
+            .collect();
+        let formatted_prompt = apply_template(
+            &chat_template,
+            &system_instructions_to_use,
+            &chat_history,
+            &prompt_to_use,
+        );
 
         let system_param = if system_instructions_to_use.is_empty() {
             None
         } else {
             Some(system_instructions_to_use)
+        };
+
+        // Use the max_context defined in the brain configuration, defaulting to a provider-aware fallback
+        let max_context = if brain.provider == "local" {
+            4096 // Safe default VRAM budget for local inference
+        } else {
+            1000000 // Modern default for cloud APIs (OpenAI, Gemini, Anthropic, etc.)
         };
 
         let params = InferParams {
@@ -133,7 +160,7 @@ pub async fn run(
             max_tokens: brain.max_tokens,
             temperature: brain.temperature as f64,
             repeat_penalty: 1.1,
-            max_context: 4096,
+            max_context,
             grammar: None,
             provider: Some(brain.provider.clone()),
             system: system_param,
@@ -142,14 +169,14 @@ pub async fn run(
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(100);
         let tx_clone = tx.clone();
-        
+
         let final_prompt = if brain.provider == "local" {
             formatted_prompt
         } else {
             prompt_to_use.clone()
         };
         let prompt_to_use_clone = final_prompt.clone();
-        
+
         let params_clone = InferParams {
             model: params.model.clone(),
             threads: params.threads,
@@ -164,13 +191,10 @@ pub async fn run(
         };
 
         let inference_handle = tokio::spawn(async move {
-            infer_with_params_streaming(
-                &prompt_to_use_clone,
-                &params_clone,
-                move |token| {
-                    let _ = tx_clone.try_send(token);
-                }
-            ).await
+            infer_with_params_streaming(&prompt_to_use_clone, &params_clone, move |token| {
+                let _ = tx_clone.try_send(token);
+            })
+            .await
         });
 
         drop(tx);
@@ -182,17 +206,23 @@ pub async fn run(
             answer.push_str(&token);
         }
 
-        let result = inference_handle.await??;
-        
+        let _result = inference_handle.await??;
+
         let turn_label = history.len() / 2 + 1;
         let remaining = MAX_HISTORY_TURNS.saturating_sub(history.len() + 2);
         let hint = if remaining > 0 {
-            format!("turn {} · {} turns until oldest context drops", turn_label, remaining)
+            format!(
+                "turn {} · {} turns until oldest context drops",
+                turn_label, remaining
+            )
         } else {
             format!("turn {} · history window full", turn_label)
         };
 
-        println!("\n{}", truecolor(&format!("  └─ Done  {}", hint), 107, 122, 150));
+        println!(
+            "\n{}",
+            truecolor(&format!("  └─ Done  {}", hint), 107, 122, 150)
+        );
 
         // Safety Response Censorship Check
         let sanitized_answer = safety.sanitize_response(&answer);
@@ -201,28 +231,16 @@ pub async fn run(
             answer = sanitized_answer;
         }
 
-        let (cost, saved) = uneven_core::infrastructure::llm::pricing::calculate_cost_and_saved(
-            &result.model,
-            result.prompt_tokens,
-            result.completion_tokens,
-        );
-        println!(
-            "{}",
-            truecolor(
-                &format!(
-                    "  [Tokens used: {} | Cost: ${:.5} | Saved: ${:.5}]",
-                    result.tokens_used, cost, saved
-                ),
-                107, 122, 150
-            )
-        );
         println!();
 
         history.push(("user".to_string(), prompt_to_use));
         history.push(("assistant".to_string(), answer));
-        if history.len() > MAX_HISTORY_TURNS {
-            history.splice(0..history.len() - MAX_HISTORY_TURNS, std::iter::empty());
-        }
+        let mut turns: Vec<uneven_core::infrastructure::llm::history_manager::BrainTurn> = history
+            .iter()
+            .map(|(r, c)| uneven_core::infrastructure::llm::history_manager::BrainTurn { role: r.clone(), content: c.clone() })
+            .collect();
+        uneven_core::application::ContextCompactorService::auto_compact(&mut turns);
+        history = turns.into_iter().map(|t| (t.role, t.content)).collect();
     }
 
     // Stop guardian thread

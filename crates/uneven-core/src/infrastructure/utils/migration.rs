@@ -77,11 +77,10 @@ pub fn migrate_legacy_structure<P: AsRef<Path>>(root: P) -> Result<(), UnevenErr
             }
         }
 
-        if is_empty {
-            if let Err(e) = fs::remove_dir(&dir_path) {
+        if is_empty
+            && let Err(e) = fs::remove_dir(&dir_path) {
                 tracing::warn!("Failed to remove empty directory {:?}: {}", dir_path, e);
             }
-        }
     }
 
     Ok(())

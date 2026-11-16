@@ -72,11 +72,10 @@ impl AgentOrchestrator {
         suggestion = strategies::find_heuristic_fix(actual_error, &content);
 
             if only_use_strategies {
-                if let Some(ref mut s) = suggestion {
-                    if s.confidence >= 0.3 {
+                if let Some(ref mut s) = suggestion
+                    && s.confidence >= 0.3 {
                         s.confidence = 0.6; // Boost to 0.6 so that confidence >= 0.5 passes!
                     }
-                }
             } else {
                 // 2. LLM Fallback if heuristics failed or low confidence
                 if suggestion.is_none() || suggestion.as_ref().unwrap().confidence < 0.6 {
@@ -152,11 +151,10 @@ impl AgentOrchestrator {
                                 }))
                             } else {
                                 self.logger.warn("Tests failed. Reverting changes...");
-                                if let Some(snap) = snapshot {
-                                    if let Err(err) = snapshot_manager.restore(&snap.id) {
+                                if let Some(snap) = snapshot
+                                    && let Err(err) = snapshot_manager.restore(&snap.id) {
                                         self.logger.error(&format!("Critical: Failed to restore snapshot {}: {}", snap.id, err));
                                     }
-                                }
                                 Ok(Some(FixResult {
                                     suggestion,
                                     applied: false,
@@ -196,7 +194,7 @@ impl AgentOrchestrator {
                 use sha2::{Sha256, Digest};
                 let mut hasher = Sha256::new();
                 hasher.update(content.as_bytes());
-                format!("{:x}", hasher.finalize())
+                hasher.finalize().into_iter().map(|b| format!("{:02x}", b)).collect()
             } else {
                 String::new()
             };

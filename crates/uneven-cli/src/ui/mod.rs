@@ -1,30 +1,30 @@
 use console::style;
 use std::io::Write;
 
-// ─── Cores do Tema (Tokens de Design do Uneven) ───────────────────────────────
+// ─── Theme Colors (Uneven Design Tokens) ───────────────────────────────────────
 
 pub fn accent(s: &str) -> String {
-    truecolor(s, 168, 200, 255) // #a8c8ff - azul gelo / acento primário
+    truecolor(s, 168, 200, 255) // #a8c8ff - ice blue / primary accent
 }
 
 pub fn bright(s: &str) -> String {
-    truecolor(s, 208, 232, 255) // #d0e8ff - destaque brilhante
+    truecolor(s, 208, 232, 255) // #d0e8ff - bright highlight
 }
 
 pub fn crystal(s: &str) -> String {
-    truecolor(s, 232, 237, 245) // #e8edf5 - texto primário
+    truecolor(s, 232, 237, 245) // #e8edf5 - primary text
 }
 
 pub fn dim(s: &str) -> String {
-    truecolor(s, 107, 122, 150) // #6b7a96 - cinza muted / descrições
+    truecolor(s, 107, 122, 150) // #6b7a96 - muted gray / descriptions
 }
 
 pub fn green(s: &str) -> String {
-    truecolor(s, 0, 255, 140) // #00ff8c - sucesso
+    truecolor(s, 0, 255, 140) // #00ff8c - success
 }
 
 pub fn rust(s: &str) -> String {
-    truecolor(s, 255, 107, 53) // #ff6b35 - avisos / erros
+    truecolor(s, 255, 107, 53) // #ff6b35 - warnings / errors
 }
 
 #[allow(dead_code)]
@@ -36,7 +36,7 @@ pub fn accent_bold(s: &str) -> String {
     truecolor_bold(s, 168, 200, 255)
 }
 
-// ─── Utilitários de Alinhamento ───────────────────────────────────────────────
+// ─── Alignment Utilities ──────────────────────────────────────────────────────
 
 pub fn pad(str: &str, total: usize) -> String {
     let clean = console::strip_ansi_codes(str);
@@ -61,10 +61,10 @@ pub fn center(str: &str, total: usize) -> String {
     }
 }
 
-// ─── Componentes Visuais do CLI ───────────────────────────────────────────────
+// ─── Visual CLI Components ────────────────────────────────────────────────────
 
 #[allow(dead_code)]
-const W: usize = 52; // Largura interna do box de diálogo
+const W: usize = 52; // Internal dialog box width
 
 pub fn box_header(version: &str) {
     let line1 = format!("◈  𝗨 𝗡 𝗘 𝗩 𝗘 𝗡   𝗔 𝗚 𝗘 𝗡 𝗧   v{}  ◈", version);
@@ -78,16 +78,16 @@ pub fn box_header(version: &str) {
 pub fn box_welcome(version: &str, brain: &str, is_first_run: bool) {
     let line1 = format!("◈  𝗨 𝗡 𝗘 𝗩 𝗘 𝗡   𝗔 𝗚 𝗘 𝗡 𝗧   v{}  ◈", version);
     let line2 = "Person: (Senior Engineer)";
-
+    let line3 = format!("Brain: {}", brain);
     println!("  {}", bright(&line1));
     println!("  {}", dim(line2));
+
     if is_first_run {
-        let line3 = "Description: Autonomous local development agent.";
-        println!("  {}", dim(line3));
+        println!(" Default {}", bright(&line3));
     } else {
-        let line3 = format!("Brain: {}", brain);
         println!("  {}", dim(&line3));
     }
+
     println!();
 }
 
@@ -127,7 +127,7 @@ pub fn cmd_line(cmd: &str, desc: &str) {
     println!("     {} {}", accent(&padded), dim(desc));
 }
 
-// ─── Funções Legadas (Compatibilidade) ────────────────────────────────────────
+// ─── Legacy Functions (Compatibility) ────────────────────────────────────────
 
 #[allow(dead_code)]
 pub fn print_info(msg: &str) {
@@ -153,28 +153,48 @@ pub fn truecolor_bold(text: &str, r: u8, g: u8, b: u8) -> String {
 }
 
 pub struct StreamRenderer {
-    prefix: String,
+    prefix: String,                       // Prefix for new lines, e.g., "  "
+    formatter: TerminalMarkdownFormatter, // Markdown formatter to apply styles
 }
 
 impl StreamRenderer {
     pub fn new() -> Self {
         Self {
             prefix: "  ".to_string(),
+            formatter: TerminalMarkdownFormatter::new(),
         }
     }
 
     pub fn push(&mut self, token: &str) {
-        for c in token.chars() {
-            if c == '\n' {
-                print!("\n{}", self.prefix);
-            } else {
-                print!("{}", crystal(&c.to_string()));
-            }
+        // for c in token.chars() {
+        //     if c == '\n' {
+        //         print!("\n{}", self.prefix);
+        //     } else {
+        //         print!("{}", crystal(&c.to_string()));
+        //     }
+        // }
+        // Process the token using the markdown formatter
+        let formatted_output = self.formatter.process_token(token);
+
+        // Split the formatted output by newlines to apply the prefix correctly
+        let mut remaining = formatted_output.as_str();
+        while let Some(idx) = remaining.find('\n') {
+            let line = &remaining[..idx];
+            // Print the content up to the newline
+            print!("{}", line);
+            // Print the newline and the prefix for the next line
+            print!("\n{}", self.prefix);
+            // Move past the newline character
+            remaining = &remaining[idx + 1..];
         }
+        // Print any remaining content after the last newline (or if no newlines were found)
+        print!("{}", remaining);
+
         let _ = std::io::stdout().flush();
     }
 }
 
+// Context line after edit
 pub fn select_item(title: &str, options: &[&str]) -> Option<usize> {
     use console::{Key, Term};
     let term = Term::stdout();
@@ -223,6 +243,9 @@ pub struct TerminalMarkdownFormatter {
     pub heading_active: bool,
     pub line_start: bool,
     pub pending_hashes: usize,
+    pub in_inline_code: bool,
+    pub in_code_block: bool,
+    pub pending_backticks: usize,
 }
 
 impl TerminalMarkdownFormatter {
@@ -233,7 +256,16 @@ impl TerminalMarkdownFormatter {
             heading_active: false,
             line_start: true,
             pending_hashes: 0,
+            in_inline_code: false,
+            in_code_block: false,
+            pending_backticks: 0,
         }
+    }
+
+    /// Formats a complete markdown string with ANSI Dracula styling.
+    pub fn format(text: &str) -> String {
+        let mut formatter = Self::new();
+        formatter.process_token(text)
     }
 
     pub fn process_token(&mut self, token: &str) -> String {
@@ -246,21 +278,67 @@ impl TerminalMarkdownFormatter {
                     result.push_str("\x1b[0m");
                     self.heading_active = false;
                 }
+                if self.in_inline_code {
+                    result.push_str("\x1b[0m");
+                    self.in_inline_code = false;
+                }
                 result.push('\n');
                 self.line_start = true;
                 self.pending_hashes = 0;
+                self.pending_backticks = 0;
                 continue;
             }
 
-            if self.line_start {
+            // Code block delimiter check (```)
+            if c == '`' {
+                self.pending_backticks += 1;
+                if self.pending_backticks == 3 {
+                    self.in_code_block = !self.in_code_block;
+                    self.pending_backticks = 0;
+                    if self.in_code_block {
+                        // Dracula Code Block: soft flat styling without box borders
+                        result.push_str("\x1b[38;2;248;248;242m");
+                    } else {
+                        result.push_str("\x1b[0m");
+                    }
+                    continue;
+                }
+                // Check if inline code toggle
+                if !self.in_code_block && chars.peek() != Some(&'`') && self.pending_backticks == 1 {
+                    self.in_inline_code = !self.in_inline_code;
+                    self.pending_backticks = 0;
+                    if self.in_inline_code {
+                        // Dracula Inline Code: selection bg with green text
+                        result.push_str("\x1b[48;2;68;71;90m\x1b[38;2;80;250;123m ");
+                    } else {
+                        result.push_str(" \x1b[0m");
+                    }
+                    continue;
+                }
+                continue;
+            } else if self.pending_backticks > 0 {
+                for _ in 0..self.pending_backticks {
+                    result.push('`');
+                }
+                self.pending_backticks = 0;
+            }
+
+            if self.line_start && !self.in_code_block {
                 if c == '#' {
                     self.pending_hashes += 1;
                     continue;
                 } else if c == ' ' && self.pending_hashes > 0 {
                     self.heading_active = true;
                     self.line_start = false;
+                    let hashes = self.pending_hashes;
                     self.pending_hashes = 0;
-                    result.push_str("\x1b[1;36m"); // Cyan Bold
+                    // Dracula Headings Hierarchy: clean typography without decorative symbols
+                    match hashes {
+                        1 => result.push_str("\x1b[1;38;2;189;147;249m"), // H1: Dracula Purple Bold
+                        2 => result.push_str("\x1b[1;38;2;139;233;253m"), // H2: Dracula Cyan Bold
+                        3 => result.push_str("\x1b[1;38;2;80;250;123m"),  // H3: Dracula Green Bold
+                        _ => result.push_str("\x1b[1;38;2;255;184;108m"), // H4+: Dracula Orange Bold
+                    }
                     continue;
                 } else {
                     for _ in 0..self.pending_hashes {
@@ -271,7 +349,8 @@ impl TerminalMarkdownFormatter {
                 }
             }
 
-            if c == '*' {
+            // Bold formatting with **
+            if c == '*' && !self.in_code_block && !self.in_inline_code {
                 if self.pending_star {
                     self.bold_active = !self.bold_active;
                     self.pending_star = false;
@@ -280,18 +359,16 @@ impl TerminalMarkdownFormatter {
                     } else {
                         result.push_str("\x1b[22m");
                     }
-                } else {
-                    if chars.peek() == Some(&'*') {
-                        chars.next();
-                        self.bold_active = !self.bold_active;
-                        if self.bold_active {
-                            result.push_str("\x1b[1m");
-                        } else {
-                            result.push_str("\x1b[22m");
-                        }
+                } else if chars.peek() == Some(&'*') {
+                    chars.next();
+                    self.bold_active = !self.bold_active;
+                    if self.bold_active {
+                        result.push_str("\x1b[1m");
                     } else {
-                        self.pending_star = true;
+                        result.push_str("\x1b[22m");
                     }
+                } else {
+                    self.pending_star = true;
                 }
             } else {
                 if self.pending_star {
@@ -329,16 +406,44 @@ mod tests {
     fn test_terminal_markdown_formatter_heading() {
         let mut formatter = TerminalMarkdownFormatter::new();
 
-        // Heading detection
+        // H1 detection (Dracula Purple)
+        assert_eq!(
+            formatter.process_token("# Main Title"),
+            "\x1b[1;38;2;189;147;249mMain Title"
+        );
+        assert_eq!(
+            formatter.process_token("\n"),
+            "\x1b[0m\n"
+        );
+
+        // H2 detection (Dracula Cyan)
         assert_eq!(
             formatter.process_token("## Heading Title"),
-            "\x1b[1;36mHeading Title"
+            "\x1b[1;38;2;139;233;253mHeading Title"
         );
 
         // Heading reset on newline
         assert_eq!(
             formatter.process_token("\nNormal text"),
             "\x1b[0m\nNormal text"
+        );
+    }
+
+    #[test]
+    fn test_terminal_markdown_formatter_code() {
+        let mut formatter = TerminalMarkdownFormatter::new();
+
+        // Inline code (Dracula Selection bg + Green fg with terminal pill padding)
+        assert_eq!(
+            formatter.process_token("Use `cargo run` here"),
+            "Use \x1b[48;2;68;71;90m\x1b[38;2;80;250;123m cargo run \x1b[0m here"
+        );
+
+        // Code block toggle (no contour box borders, just clean dracula styling)
+        let mut formatter2 = TerminalMarkdownFormatter::new();
+        assert_eq!(
+            formatter2.process_token("```rust\nlet x = 1;\n```"),
+            "\x1b[38;2;248;248;242mrust\nlet x = 1;\n\x1b[0m"
         );
     }
 }

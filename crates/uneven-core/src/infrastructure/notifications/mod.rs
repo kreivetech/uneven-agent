@@ -65,13 +65,11 @@ impl WebhookNotifier {
 
         if host.starts_with("172.") {
             let parts: Vec<&str> = host.split('.').collect();
-            if parts.len() >= 2 {
-                if let Ok(second) = parts[1].parse::<u8>() {
-                    if (16..=31).contains(&second) {
+            if parts.len() >= 2
+                && let Ok(second) = parts[1].parse::<u8>()
+                    && (16..=31).contains(&second) {
                         return false;
                     }
-                }
-            }
         }
 
         true
@@ -95,12 +93,11 @@ impl WebhookNotifier {
         {
             let mut last = self.last_notify.lock().unwrap();
             let now = Instant::now();
-            if let Some(last_time) = *last {
-                if now.duration_since(last_time) < min_interval {
+            if let Some(last_time) = *last
+                && now.duration_since(last_time) < min_interval {
                     tracing::info!("[SECURITY] Webhook rate limit throttled.");
                     return Ok(());
                 }
-            }
             *last = Some(now);
         }
 

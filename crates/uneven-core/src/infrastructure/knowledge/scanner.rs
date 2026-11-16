@@ -57,8 +57,8 @@ impl ProjectScanner {
         for result in walker {
             match result {
                 Ok(entry) => {
-                    if entry.file_type().is_some_and(|ft| ft.is_file()) {
-                        if let Ok(rel) = entry.path().strip_prefix(&self.root) {
+                    if entry.file_type().is_some_and(|ft| ft.is_file())
+                        && let Ok(rel) = entry.path().strip_prefix(&self.root) {
                             // Filter out ignored folders (like node_modules, .git, .uneven, target, dist, build, venv, .venv)
                             let has_ignored_component = rel.components().any(|c| {
                                 if let Some(s) = c.as_os_str().to_str() {
@@ -104,7 +104,6 @@ impl ProjectScanner {
                                 files.push(rel_str);
                             }
                         }
-                    }
                 }
                 Err(_e) => {
                     // Silent fail for individual file scan warnings to avoid information leakage.

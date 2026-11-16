@@ -26,9 +26,9 @@ pub fn sync_agent_protocols(project_root: &str) -> Vec<String> {
         let folder_path = Path::new(project_root).join(agent.folder);
         let file_path = Path::new(project_root).join(agent.file);
 
-        // REGRA: Só injeta se a pasta do agente existir
+        // RULE: Only inject if agent directory exists
         if folder_path.exists() && folder_path.is_dir() {
-            // SEGURANÇA: Nunca injetar na pasta .uneven
+            // SECURITY: Never inject into the .uneven folder
             if agent.file.contains(".uneven") {
                 continue;
             }

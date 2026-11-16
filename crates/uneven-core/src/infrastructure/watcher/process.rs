@@ -344,11 +344,10 @@ impl ProcessWatcher {
     }
 
     pub fn stop(&mut self) {
-        if self.is_running.swap(false, Ordering::SeqCst) {
-            if let Some(cancel) = self.cancel_tx.take() {
+        if self.is_running.swap(false, Ordering::SeqCst)
+            && let Some(cancel) = self.cancel_tx.take() {
                 let _ = cancel.send(());
             }
-        }
     }
 
     pub fn is_running(&self) -> bool {

@@ -97,8 +97,8 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
         });
     }
 
-    if code_str == "GO_TYPE" || error.message.contains("cannot use") {
-        if let Some(caps) = RE_GO_TYPE.captures(&error.message) {
+    if (code_str == "GO_TYPE" || error.message.contains("cannot use"))
+        && let Some(caps) = RE_GO_TYPE.captures(&error.message) {
             let expr = caps.get(1).map(|m| m.as_str()).unwrap_or("expr");
             let got_type = caps.get(2).map(|m| m.as_str()).unwrap_or("type");
             let exp_type = caps.get(3).map(|m| m.as_str()).unwrap_or("type");
@@ -114,7 +114,6 @@ pub fn suggest(error: &ErrorEvent, content: &str) -> Option<FixSuggestion> {
                 suggested_fix: format!("Convert '{}' to {}, e.g. {}({})", expr, exp_type, exp_type, expr),
             });
         }
-    }
 
     None
 }

@@ -13,12 +13,11 @@ impl MarkdownLogger {
         let dir = Path::new(&log_path).parent().unwrap();
         let _ = create_dir_all(dir);
 
-        if !Path::new(&log_path).exists() {
-            if let Ok(mut file) = OpenOptions::new().create(true).write(true).truncate(true).open(&log_path) {
+        if !Path::new(&log_path).exists()
+            && let Ok(mut file) = OpenOptions::new().create(true).write(true).truncate(true).open(&log_path) {
                 let header = format!("# Uneven Log — {}\n\n", Utc::now().format("%Y-%m-%d"));
                 let _ = file.write_all(header.as_bytes());
             }
-        }
 
         Self { path: log_path }
     }

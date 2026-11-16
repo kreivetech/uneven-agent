@@ -3,21 +3,34 @@
 ![license](https://img.shields.io/badge/license-BSL%201.1-blue)
 
 >
-> Runs on your machine. Meets **Snatchy**, your autonomous senior engineer. She indexes your codebase, watches running terminals in real time, **autonomously fixes errors**, scans for **malicious code**, performs **security testing**, and manages your project via a **conversational shell**.
+> Runs on your machine. An autonomous senior AI software engineering agent that indexes your codebase, plans and audits code changes with deep self-critique, watches running terminals in real time, **autonomously fixes errors**, scans for **malicious code**, performs **security testing**, and manages your project via a **conversational shell** or native developer interface.
 >
-> Use your own API key or run 100% offline.
+> Use your own cloud API keys or run 100% offline.
 
 ---
 
 ## Features
 
-- **⚡ High-Efficiency Intelligence** — Reduces token consumption by executing heavy tasks locally, using AI only for final reasoning.
-- **🔄 Three-Cache Auto-Recovery** — Automatically retrieves missing files requested by the LLM during conversation while avoiding infinite loops and redundant I/O via a three-layered caching architecture.
-- **📊 Autonomous Business Intelligence** — Generate interactive queries and dashboards in a single prompt with stateful conversational refinement and dynamic 3-layer data protection.
-- **📶 Remote Intelligence Hub** — Securely integrate with external tools (such as IDE extensions) via a Remote Shell API, supporting stateful in-process conversational chat sessions and stateless command execution.
-- **🛡️ Enterprise Brand-Neutrality** — All internal system instructions are brand-neutral, allowing easy integration into custom white-labeled developer copilots.
-- **🔍 Keyless Web Search & Sitemap Caching** — Enables the agent to query DuckDuckGo and Wikipedia on-demand for coding documentation or API help, while automatically crawling and caching domain sitemaps in the background to build a local map of documentation URLs.
-- **⚡ Native Performance** — Optimized for your hardware during installation, ensuring fast and private execution.
+- **⬡ Uneven Pods (Dedicated Architectural Clusters)** — Unlike ephemeral multi-agents that resolve small ad-hoc subtasks, Pods are persistent, dedicated clusters assigned to an entire software layer (e.g. *Database & Schema*, *Backend API & Logic*, *Frontend UI & Client*, *DevOps*). Pods execute large macro-missions powered by the reflective 3-turn `think` loop under strict domain-isolation laws (`get_pod_context`), preventing layer drift. Completed missions emit a structured `PodHandoffReport` with exported public contracts and sister-layer requirements, allowing the Master Agent to orchestrate and chain orders across clusters automatically without requiring manual pod switching.
+- **🧠 Reflection & Self-Critique Engine with Rubber Duck Verification (`think`)** — Deep reasoning loop enhanced with intermediate Rubber Duck reflections (draft assumption unpacking and pre-flight execution dry-run simulation) coupled with an 18-point architectural audit, guaranteeing logic fidelity (anti-drift), cyclomatic complexity limits, documentation integrity, and host resource safety.
+- **🎯 Adaptive Cognitive Sizing & Reactive Plan Execution** — Automatically scales output strategy based on task complexity: conceptual queries output clean markdown explanations (Case A); atomic single-file edits generate immediate patches with confirmation requests (Case B); complex multi-file architectural tasks present a blueprint first to save token budget without premature diff truncation (Case C); approving a proposal with natural confirmations (*"sim"*, *"aplique"*, *"proceed"*) or `/go` dedicates 100% token budget to generate and apply complete file patches to disk (Case D).
+- **🛠️ Dynamic Operational Skills (`[USE_SKILL: name]`)** — Skills such as `explain` and `docs` are operational engineering standards invoked autonomously by the model without rigid personas, clashing biases, or dead weight in system prompts.
+- **🛡️ Modernized Resource Guardian & Hardware Calibration** — Continuous monitoring across per-core CPU utilization, dynamic RAM thresholds, and integrated GPU (iGPU) UMA shared memory pressure in `uneven-core`, coupled with zero-copy `mmap` and layer-by-layer weight streaming for local models.
+- **🛡️ Single-Run Command Guard & Anti-Freeze Protection** — Global asynchronous synchronization lock (`acquire_heavy_command_guard()`) ensuring that heavy compilation, testing, or build steps (`cargo check`, `cargo build`, `npm run build`, `pytest`) never execute concurrently across Pods, preventing host CPU freeze.
+- **⚡ Cognitive Harness Over Model Size** — By wrapping the model with strict domain laws, self-critique audits, real-time `PROJECT_FILES_MAP` context, and inter-cluster handoffs, Uneven makes *any* model (from local 1B–3B offline GGUFs running on CPU to frontier cloud models) execute with the discipline and accuracy of a senior software engineer.
+- **🌐 Keyless Token Economy & Prompt Guard** — Converts natural language prompts to concise English via DuckDuckGo before LLM submission, slashing 30–50% input tokens and boosting code generation fidelity. Imposes a 2,000-character safety guard with real-time UI counters to prevent overflow and encourage workspace file attachments (`📎`).
+- **🔄 Autonomous Context Compaction & Quota Telemetry** — Integrates autonomous compaction in `uneven-core` that condenses multi-turn conversation logs into high-fidelity context summaries when token saturation is reached, preventing context truncation while maximizing cognitive budget. Provides real-time sliding-window quota tracking (5-hour turn, rolling 7 days, and monthly calendar quota) with zero filesystem leakage.
+- **🗣️ Native-Language Response Synthesis** — Human-facing explanations, proposals, and summaries are generated natively in the developer's primary language (e.g. Portuguese), while diff hunks, functions, and code syntax strictly remain in clean English. Zero external translation calls on output avoids character limits and diff corruption.
+- **🤖 Hierarchical Multi-Agent Supervision** — Prime Supervisors break down complex engineering tasks into sequential, atomic subtasks executed by specialized worker agents with live step-by-step auditing.
+- **🖥️ Dual Interface Architecture & Integrated Terminal** — Engineered with a modular workspace design: work seamlessly from a high-speed command-line interface (`uneven`) with full autonomous agent capabilities, or launch the native visual Desktop IDE Cockpit (`uneven-ui` v0.2.0) built with Dioxus 0.7. Launch directly from terminal using `une .` or `uneven .`, manage multiple integrated terminal tabs concurrently, expand terminal to full height (`⤢`), edit code in-place, and track real-time sliding-window quota telemetry.
+- **📝 Declarative Markdown Protocols** — Fully transparent action blocks (```` ```shell-action ````, ``` ```` sql ````) and standard unified diff patches without fragile raw JSON envelopes, making all proposed changes human-auditable and reliable across AI models.
+- **🛡️ DevSecOps & Anti-False Positive Pentesting (`pentest`)** — Automated security audit pipeline with test/fixture heuristic awareness, multi-level semantic LLM review to eliminate false alarms, cryptographic scope signing, and CycloneDX 1.4 SBOM generation.
+- **📊 Blind Autonomous Business Intelligence (`analyze`)** — Generate interactive queries and dashboards in a single prompt with strict column redaction, Catfive sample data masking, and mandatory user permission prior to any SQL execution.
+- **⚡ High-Efficiency Intelligence & Postcard Persistence** — Reduces token consumption by executing heavy tasks locally, using AI only for final reasoning and code synthesis, backed by ultra-compact binary persistence powered by `postcard`.
+- **📶 Remote Intelligence Hub** — Securely integrate with external tools (such as IDE extensions and remote frontends) via a Remote Shell API, supporting stateful in-process conversational chat sessions and stateless command execution.
+- **🛡️ Enterprise Brand-Neutrality** — All internal system instructions are brand-neutral and customizable, allowing easy integration into white-labeled developer copilots.
+- **🔍 Keyless Web Search & Sitemap Caching** — Enables the agent to query DuckDuckGo and Wikipedia on-demand for coding documentation or API help, while automatically crawling and caching domain sitemaps in the background.
+- **⚡ Native Performance** — Built in 100% Rust and optimized for your hardware during installation, ensuring ultra-fast and private execution.
 
 ---
 
@@ -27,6 +40,10 @@
 |---|:---:|:---:|
 | Conversational shell | ✅ | ✅ |
 | `ask` — query your codebase | ✅ | ✅ |
+| `think` — deep reasoning & 18-point audit | ✅ | ✅ |
+| `pods` — Connected Workstreams Pipeline | ✅ | ✅ |
+| `multi-agent` — Hierarchical Prime & Subagents | ✅ | ✅ |
+| Native Desktop Cockpit (`uneven-ui`) | ✅ (v0.2.0) | ✅ (v0.2.0) |
 | `index` — index knowledge base | ✅ | ✅ |
 | `explain` — explain any file | ✅ | ✅ |
 | `docs` — generate documentation | ✅ | ✅ |
@@ -40,7 +57,7 @@
 | `analyze` — data analyst | — | ✅ |
 | `ci` — CI/CD pipeline | — | ✅ |
 
-> Free users can use their own API keys and interact via Shell without message limits. Security Auditing (`pentest`) and Data Analysis (`analyze`) are exclusive to Pro/Team tiers.
+> Free users can use their own API keys, run Pods, and interact via Shell and Desktop IDE without message limits. Security Auditing (`pentest`) and Data Analysis (`analyze`) are exclusive to Pro/Team tiers.
 
 ---
 
@@ -64,7 +81,7 @@ Requirements vary depending on the **brain provider** you choose. The standalone
 | Disk | 200 MB + model size | Ollama stores models in its own directory |
 | OS | Linux, macOS, Windows 11 | |
 
-### Local brain (Snatchy — no API, no cloud)
+### Local brain (100% Offline — no API, no cloud)
 
 | Item | Minimum | Recommended |
 |---|---|---|
@@ -95,25 +112,34 @@ uneven
 # 4. Ask questions about your code
 uneven ask "What does the authenticateUser function do?"
 
-# 5. Start the autonomous agent (watch + auto-fix) [Pro]
+# 5. Deep reasoning & 18-point self-critique before coding
+uneven think "Refactor authentication layer to JWT"
+
+# 6. Apply file changes or create code directly
+uneven askf "Create user model with password hashing"
+
+# 7. Start the autonomous agent (watch + auto-fix) [Pro]
 uneven start
 
-# 6. Scan for malware and supply chain attacks
+# 8. Scan for malware and supply chain attacks
 uneven scan
 
-# 7. Run a code review [Pro]
+# 9. Run a code review [Pro]
 uneven review
 
-# 8. Analyze data & Dashboards [Pro]
+# 10. Analyze data & Dashboards [Pro]
 uneven analyze --db postgresql://localhost/mydb
 # Generate a complete sales dashboard for the last month in a single prompt.
 # Uneven processes the data locally and delivers the ready-to-use insight.
 
-# 9. Run security analysis [Pro]
+# 11. Run security analysis [Pro]
 uneven pentest
 
-# 10. Run CI pipeline [Pro]
+# 12. Run CI pipeline [Pro]
 uneven ci
+
+# 13. Launch the visual Desktop IDE Cockpit
+cargo run -p uneven-ui
 ```
 
 ---
@@ -122,8 +148,8 @@ uneven ci
 
 `uneven init` walks you through selecting a provider and configuring your environment:
 
-- **Snatchy (Local)** — Runs everything on your machine. No internet required after setup.
-- **Cloud providers** — Use your existing accounts (OpenAI, Claude, Gemini).
+- **Local Brain (Offline)** — Runs local models natively on your machine. No internet required after setup.
+- **Cloud providers** — Use your existing accounts (OpenAI, Claude, Gemini, DeepSeek).
 
 ---
 
@@ -163,7 +189,7 @@ If you choose to edit the `config.json` file directly, here is the supported sch
 ```json
 {
   "brain": {
-    "provider": "local",          // "local" (Snatchy) | "ollama" | "gemini" | "openai" | "claude" | "deepseek"
+    "provider": "local",          // "local" (offline embedded) | "ollama" | "gemini" | "openai" | "claude" | "deepseek"
     "model": "llama-3.2-1b-q4",   // set automatically or via /models
     "apiKey": null,
     "temperature": 0.3,
@@ -233,13 +259,93 @@ uneven info                    # Show system info (GPU, version, model)
 uneven uninstall               # Uninstall Uneven Agent and clean up all global files
 ```
 
-### Watch & Fix
+### Reasoning, Code Generation & Editing
+
+```bash
+uneven think "refactor auth layer"       # Multi-turn 18-point self-critique & declarative patch plan
+uneven askf "create a login endpoint"    # AI creates/edits files (with automatic rollback & backup)
+```
+
+> **Hierarchy of Mutation & Adaptive Sizing:** Uneven enforces cognitive sizing before mutation:
+> - **Case A (Inquiry / Q&A):** Clean markdown technical explanations with no file mutations.
+> - **Case B (Micro / Atomic):** Immediate patch generation with concise search/replace blocks for single-file fixes.
+> - **Case C (Medium / Complex Multi-File):** Comprehensive architectural blueprint and component map first, preserving output tokens without premature truncated diffs.
+> - **Case D (Approved Execution / Autonomous):** Responding naturally with *"sim"*, *"aplique"*, or running with `/go` allocates 100% of the token budget to concrete diff patches and automatically applies them to disk.
+
+### Uneven Pods (Dedicated Architectural Clusters & Connected Workstreams)
+
+```bash
+# Launch the Native Desktop Cockpit to access the visual Pods cluster
+cargo run -p uneven-ui
+
+# Or dispatch macro-missions directly from the interactive shell
+uneven
+> dispatch backend "Implement JWT authentication middleware and login route"
+```
+
+Uneven introduces **Pods**: persistent, dedicated engineering clusters assigned to an entire architectural layer of your application (`Database ──► Backend ──► Frontend ──► DevOps`):
+
+- **Dedicated Clusters vs. Ephemeral Multi-Agents**:
+  - **Multi-Agents (`multi_agents`)**: Temporary, ephemeral micro-workers spawned on-the-fly to execute small, ad-hoc tasks (e.g. searching a file, generating an isolated test case) and discarded immediately after.
+  - **Uneven Pods (`pods`)**: Persistent, domain-bound engineering clusters that own an entire vertical slice of the stack. A Pod maintains persistent disk-backed conversational history (`.uneven/history/{session_id}_{pod_id}.json`), scoped project context, and specialized Prime leadership for executing large-scale, multi-file macro-missions.
+
+- **Cognitive Harness Over Model Size**:
+  - Pods do not require massive 70B+ cloud models to deliver senior engineering output. Every Pod runs inside the **Cognitive Harness**:
+    1. **Strict Layer Isolation Laws (`laws::get_pod_context`)**: Primes have full read visibility over `PROJECT_FILES_MAP` to inspect cross-module imports and interfaces, but are system-forbidden from modifying files outside their assigned layer.
+    2. **3-Turn Reflective Reasoning Loop (`think`)**: Every mission undergoes a mandatory `Draft Plan` ➔ `18-Point Architectural Self-Audit` (Anti-Drift, Cyclomatic complexity ≤ 10, Interface integrity, Backward compatibility) ➔ `Executive Synthesis`.
+    3. **Small-Model Empowerment**: By combining boundary enforcement, topologic codebase maps, and iterative self-critique, even lightweight 1B–3B offline GGUFs running on CPU operate with the discipline and precision of a senior software engineer.
+
+- **Inter-Cluster Handoff Protocol (`PodHandoffReport`)**:
+  - When a Pod completes a mission, it automatically produces a structured handoff report containing:
+    - **Technical Mission Summary**: High-level overview of accomplishments.
+    - **Exported Public Contracts**: Schemas, API endpoints, types, DTOs, and event signatures created for consumption by other layers.
+    - **Sister-Layer Advisory Notes**: Concrete integration guidelines and requirements for sibling clusters (e.g. *Database Pod* exports migration schemas and pool requirements for the *Backend Pod*; *Backend Pod* exports REST/gRPC endpoints for the *Frontend Pod*).
+    - **Modified Artifacts**: Explicit list of altered files within domain boundaries.
+
+- **Master Agent Orchestration & Autonomous Dispatch**:
+  - The **Master Agent** serves as Chief Architect, dispatching missions to specific clusters via `dispatch_pod_mission(pod_id, mission)` or natural language delegation.
+  - Upon mission completion, the Master automatically consumes the Pod's `PodHandoffReport::to_executive_summary()`, reviewing contracts and optionally chaining instructions to the next Pod in the pipeline without requiring manual developer intervention.
+
+- **Desktop Cockpit Focus Flow & Minimalist UI (`uneven-ui`)**:
+  - **Horizontal Pod Cards**: Monochromatic cards displaying live status (`idle`, `running`, `completed`), task counts, and assigned Prime titles.
+  - **Auto-Hide on Focus**: Clicking a Pod card opens its dedicated conversation stream and automatically hides the Pod cards row, maximizing screen real estate and preventing UI distraction.
+  - **Instant Exit (`✕`)**: A sleek `✕` button inside the cockpit input agent pill returns the developer to the global Master Agent chat at any time.
+  - **Pure OLED Aesthetic**: Designed for true black `#0a0a0a` panels, `#121212` matte surfaces, and subtle `#262626` borders for zero eye strain during long engineering sprints.
+
+- **Single-Run Command Guard & Anti-Freeze Protection**:
+  - An asynchronous concurrency lock (`acquire_heavy_command_guard()`) guarantees that heavy compilation or testing commands (e.g. `cargo check`, `cargo build`, `npm run build`, `pytest`) are strictly serialized across all Pods and the Master, ensuring the host machine never freezes.
+
+
+### Keyless Token Economy & Translation Engine
+
+Uneven integrates an automated, keyless input translation pipeline powered by DuckDuckGo:
+
+- **Pre-Flight Input Translation**: Natural language prompts (e.g. in Portuguese) are translated into concise technical English before submission to the LLM, reducing input token consumption by 30–50% and enhancing code generation accuracy.
+- **Smart Paragraph & Code Chunking**: Prompts up to 2,000 characters are automatically split into safe sub-chunks (≤ 900 characters) preserving markdown code fences (```` ```...``` ````) untouched.
+- **2,000-Character Prompt Guard**: A live character counter in the UI (`char_count / 2000`) and an overflow banner prevent oversized payloads, encouraging developers to attach large workspace files directly via the `📎` button instead of pasting code dumps.
+- **Bilingual Output Synthesis**: The model formulates human-facing explanations and summaries in the developer's native tongue (e.g. Portuguese), while all diffs, functions, and variable names remain strictly in English. No external translation API is used on output, eliminating character truncation and diff syntax corruption.
+- **Quick Toggle**: Enable or disable automatic translation instantly using the `[ 🌐 EN Tokens: On/Off ]` toolbar button.
+
+### Native Desktop IDE (`uneven-ui`)
+
+Uneven includes a lightning-fast native desktop IDE built with Dioxus:
+
+- **CLI Launcher (`une .` / `uneven .`)**: Launch the desktop IDE straight from your terminal positioned in the current directory (`une .`), a target path (`une /path/to/project`), or standalone (`uneven ide`). Running from your home directory (`~`) opens cleanly without auto-binding a project.
+- **Multi-Tab Integrated Terminal**: Native project terminal supporting multiple concurrent shell tabs. Create tabs with `+`, switch between tabs, terminate sessions with per-tab `✕`, and expand the terminal to full cockpit height (`⤢` / `⤡`).
+- **Freedesktop & App Store Integration**: Properly packaged as **Uneven IDE** across Linux desktop launchers, Ubuntu App Center, GNOME Software, macOS, and Windows.
+- **Engineering Cockpit**: Live layout featuring the interactive `FileTree`, the `PodFlow` workstream pipeline, real-time `ThinkStepper` indicator, and dedicated chat streams.
+- **Surgical Patch Viewer**: Side-by-side or unified diff viewer powered by `similar` with multi-file tabs, live hunk inspection, and single-click `[ Apply All Changes ]`.
+- **Dynamic Model Selector**: Switch on-the-fly between local offline models (Gemma 3, Qwen 2.5, DeepSeek-R1, Llama 3.2, Phi-4 Mini with auto-download) and cloud providers (Gemini 2.5, Claude 3.7/Sonnet, GPT-4o, DeepSeek V3/R1).
+- **Secure Key Manager**: Dedicated Settings page to securely configure and persist API keys by provider into `.env`.
+- **Prompt Guard & Token Toolbar**: Real-time character counter (`120 / 2000`), overflow alerts, and instant toggles for `[ 🤖 Multi-Agent ]` and `[ 🌐 EN Tokens ]`.
+- **Session History**: Dedicated timeline viewer for past engineering sessions, audits, and applied patches.
+
+### Watch & Review
 
 ```bash
 uneven start                   # Start full agent (watch + auto-fix) [Pro]
 uneven watch "npm run dev"     # Watch terminal — log errors only (Free) / auto-fix (Pro)
 uneven watch "cmd1" "cmd2"     # Watch multiple processes simultaneously
-uneven askf "create a login endpoint"   # AI writes/edits files for the task (Free)
 uneven review                  # AI code review of latest commit [Pro]
 uneven review --staged         # Review staged changes
 uneven review --from <ref>     # Review from a git ref
@@ -378,23 +484,23 @@ Privacy is not a feature — it's the foundation.
 ---
 
 
-## Production Mode
+## Production & Monitoring Mode
 
-```typescript
-const config: UnevenConfig = {
-  watch: {
-    terminal: 'node dist/server.js',
-    autoFix: false,     // never auto-fix in production
-    alertOnly: true,
+```json
+{
+  "watch": {
+    "terminal": "node dist/server.js",
+    "autoFix": false,
+    "confirmBeforeFix": true
   },
-  pentester: {
-    enabled: true,
-    severity: 'low',
-  },
+  "pentester": {
+    "enabled": true,
+    "mode": "static"
+  }
 }
 ```
 
-In `alertOnly` mode, Uneven Agent is a monitoring agent — it detects issues but never modifies code.
+When `autoFix` is `false`, Uneven Agent operates strictly in monitoring mode — it captures and correlates errors but never modifies code without explicit approval.
 
 ---
 

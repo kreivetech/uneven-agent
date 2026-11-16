@@ -39,12 +39,11 @@ impl SessionManager {
     }
 
     pub fn resolve_diff(&self, id: &str, status: DiffStatus) -> Result<(), std::io::Error> {
-        if let Some(mut session) = self.read() {
-            if let Some(diff) = session.pending_diffs.iter_mut().find(|d| d.id == id) {
+        if let Some(mut session) = self.read()
+            && let Some(diff) = session.pending_diffs.iter_mut().find(|d| d.id == id) {
                 diff.status = status;
                 self.write(&session)?;
             }
-        }
         Ok(())
     }
 
