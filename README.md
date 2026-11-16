@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/banner.png" alt="uneven agent banner" width="100%" />
+</p>
+
 # uneven agent
 
 ![license](https://img.shields.io/badge/license-BSL%201.1-blue)
