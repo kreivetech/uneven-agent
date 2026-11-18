@@ -55,7 +55,8 @@ models/
 # Legacy / Obsolete files
 obsolete/
 bin/
-types/
+types/*
+!types/index.d.ts
 
 # Benchmarks
 linux/
