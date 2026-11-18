@@ -204,7 +204,7 @@ jobs:
           name: binary-${{ matrix.prebuild }}
           path: dist-bin/*
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   # ── Build Desktop IDE Cockpit packages (.deb for Linux, .exe/.msi for Windows, .dmg/.app for macOS) ──
   build-ide:
@@ -348,7 +348,7 @@ jobs:
           name: ide-${{ matrix.platform }}
           path: dist-ide/*
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   # ── Package and Publish Release to Private Releases Repo ──────────────────────
   release:
@@ -356,6 +356,9 @@ jobs:
     runs-on: ubuntu-24.04
     needs: [build, build-ide]
     timeout-minutes: 20
+    permissions:
+      actions: write
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -379,3 +382,12 @@ jobs:
             release-binaries/*
         env:
           GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+
+      - name: Delete workflow artifacts
+        if: success()
+        run: |
+          for id in $(gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" --jq '.artifacts[].id'); do
+            gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/${id}"
+          done
+        env:
+          GH_TOKEN: ${{ github.token }}
