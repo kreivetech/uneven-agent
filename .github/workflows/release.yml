@@ -1,0 +1,381 @@
+name: Release
+
+# Triggered by tag push (e.g. v1.12.1).
+# Builds all platform standalone binaries in CI, packages them,
+# and publishes directly to the private uneven-releases repository.
+#
+# Acceleration features per platform:
+#   linux-x64        — base
+#   linux-x64-cuda   — cuda (candle-core CUDA backend)
+#   linux-arm64      — base (cross-compiled from ubuntu-latest)
+#   darwin-arm64     — metal + accelerate (Apple Metal/Accelerate frameworks)
+#   win32-x64        — base
+#   win32-x64-cuda   — cuda (candle-core CUDA backend)
+#
+# Desktop IDE Cockpit packages per platform:
+#   linux-x64        — .deb package + standalone binary
+#   darwin-arm64     — .dmg / .app.zip bundle + standalone binary
+#   win32-x64        — .msi / installer + standalone binary
+#
+# Secrets required:
+#   RELEASES_REPO_TOKEN — GitHub Personal Access Token (PAT) with Contents: write access to kreivesler/uneven-releases
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  # ── Build all platform binaries ──────────────────────────────────────────────
+  build:
+    name: Build ${{ matrix.prebuild }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            prebuild: linux-x64
+            features: ""
+
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            prebuild: linux-x64-cuda
+            features: "cuda"
+            cuda: true
+
+          - os: ubuntu-24.04
+            target: aarch64-unknown-linux-gnu
+            prebuild: linux-arm64
+            features: ""
+            cross: true
+
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            prebuild: darwin-arm64
+            features: "metal,accelerate"
+
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            prebuild: win32-x64
+            features: ""
+
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            prebuild: win32-x64-cuda
+            features: "cuda"
+            cuda: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install ARM64 cross-compile toolchain
+        if: matrix.cross == true
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++" >> $GITHUB_ENV
+
+      - name: Set up CUDA toolkit (Linux)
+        if: matrix.cuda == true && runner.os == 'Linux'
+        uses: Jimver/cuda-toolkit@v0.2.21
+        with:
+          cuda: '12.6.0'
+          method: network
+          sub-packages: '["nvcc", "libraries-dev"]'
+
+      - name: Set up CUDA toolkit (Windows)
+        if: matrix.cuda == true && runner.os == 'Windows'
+        uses: Jimver/cuda-toolkit@v0.2.21
+        with:
+          cuda: '12.6.0'
+          method: network
+
+      - name: Patch CUDA host_config.h for MSVC compatibility (Windows)
+        if: matrix.cuda == true && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $hostConfigPath = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\include\crt\host_config.h"
+          if (Test-Path $hostConfigPath) {
+              Write-Host "File found. Printing context around error before patch..."
+              Get-Content $hostConfigPath | Select-String -Pattern "unsupported Microsoft Visual Studio version" -Context 3, 3 | Out-String | Write-Host
+
+              Write-Host "Removing read-only attribute..."
+              Set-ItemProperty $hostConfigPath -Name IsReadOnly -Value $false
+
+              Write-Host "Patching $hostConfigPath..."
+              (Get-Content $hostConfigPath) -replace '_MSC_VER >= \d+', '_MSC_VER >= 1999' | Set-Content $hostConfigPath -Force
+
+              Write-Host "Printing context after patch..."
+              Get-Content $hostConfigPath | Select-String -Pattern "unsupported Microsoft Visual Studio version" -Context 3, 3 | Out-String | Write-Host
+
+              # Verification
+              $newContent = Get-Content $hostConfigPath
+              if ($newContent -match '_MSC_VER >= 1999') {
+                  Write-Host "Patch successfully verified!"
+              } else {
+                  Write-Error "Patch verification failed! Check permissions or file contents."
+                  exit 1
+              }
+          } else {
+              Write-Error "Warning: host_config.h not found at $hostConfigPath"
+              exit 1
+          }
+
+      - name: Configure CUDA environment
+        if: matrix.cuda == true
+        shell: bash
+        run: echo "CUDA_COMPUTE_CAP=80" >> $GITHUB_ENV
+
+      - name: Set up MSVC environment (nvcc host compiler on Windows)
+        if: matrix.cuda == true && runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          vsversion: '2022'
+
+      - name: Configure NVCC Host Compiler Path (Windows)
+        if: matrix.cuda == true && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $clPath = (Get-Command cl.exe).Source
+          $clDir = Split-Path $clPath
+          Write-Host "Found cl.exe at: $clPath"
+          Write-Host "Setting NVCC_CCBIN in GITHUB_ENV to: $clDir"
+          Add-Content -Path $env:GITHUB_ENV -Value "NVCC_CCBIN=$clDir"
+
+      - name: Remove Git link.exe (shadows MSVC link.exe on Windows)
+        if: matrix.cuda == true && runner.os == 'Windows'
+        shell: pwsh
+        run: Remove-Item "C:\Program Files\Git\usr\bin\link.exe" -Force
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: ${{ matrix.prebuild }}
+
+      - name: Build native CLI binary
+        shell: bash
+        env:
+          RUSTFLAGS: ${{ contains(matrix.target, 'x86_64') && (runner.os == 'Windows' && '-C target-cpu=generic -C target-feature=+crt-static' || '-C target-cpu=generic') || '' }}
+        run: |
+          if [ -n "${{ matrix.features }}" ]; then
+            cargo build --release -p uneven-cli \
+              --target ${{ matrix.target }} \
+              --features "${{ matrix.features }}"
+          else
+            cargo build --release -p uneven-cli \
+              --target ${{ matrix.target }}
+          fi
+
+      - name: Stage and Rename Binaries
+        shell: bash
+        run: |
+          mkdir -p dist-bin
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            # Name executable appropriately for Windows
+            if [ "${{ matrix.prebuild }}" = "win32-x64-cuda" ]; then
+              cp target/${{ matrix.target }}/release/uneven.exe dist-bin/uneven-ai-windows-x64-cuda.exe
+            else
+              cp target/${{ matrix.target }}/release/uneven.exe dist-bin/uneven-ai-windows-x64.exe
+            fi
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            cp target/${{ matrix.target }}/release/uneven dist-bin/uneven-ai-darwin-arm64
+          else
+            # Linux binaries
+            if [ "${{ matrix.prebuild }}" = "linux-x64-cuda" ]; then
+              cp target/${{ matrix.target }}/release/uneven dist-bin/uneven-ai-linux-x64-cuda
+            else
+              cp target/${{ matrix.target }}/release/uneven dist-bin/uneven-ai-${{ matrix.prebuild }}
+            fi
+          fi
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.prebuild }}
+          path: dist-bin/*
+          if-no-files-found: error
+          retention-days: 7
+
+  # ── Build Desktop IDE Cockpit packages (.deb for Linux, .exe/.msi for Windows, .dmg/.app for macOS) ──
+  build-ide:
+    name: Build IDE ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-x64
+            target: x86_64-unknown-linux-gnu
+
+          - os: windows-2022
+            platform: win32-x64
+            target: x86_64-pc-windows-msvc
+
+          - os: macos-latest
+            platform: darwin-arm64
+            target: aarch64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: llvm-tools-preview
+
+      - name: Install Dioxus CLI
+        uses: taiki-e/install-action@v2
+        with:
+          tool: dioxus-cli@0.7.10
+
+      # Linux dependencies for Dioxus/WebKitGtk
+      - name: Install Linux Dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            lld \
+            patchelf
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: ide-${{ matrix.platform }}
+
+      # Build no Linux gerando pacote .deb
+      - name: Build Linux Package (.deb)
+        if: runner.os == 'Linux'
+        working-directory: crates/uneven-ui
+        env:
+          RUSTFLAGS: "-A warnings"
+        run: dx bundle -r --linux --package-types deb
+
+      # Build no Windows gerando instalador/executável
+      - name: Build Windows Package
+        if: runner.os == 'Windows'
+        working-directory: crates/uneven-ui
+        env:
+          RUSTFLAGS: "-A warnings"
+        run: dx bundle -r --windows
+
+      # Build no macOS gerando pacote .dmg
+      - name: Build macOS Package (.dmg)
+        if: runner.os == 'macOS'
+        working-directory: crates/uneven-ui
+        env:
+          RUSTFLAGS: "-A warnings"
+        run: |
+          SYSROOT=$(rustc --print sysroot)
+          mkdir -p "$SYSROOT/lib/rustlib/aarch64-apple-darwin/lib"
+          if [ -f "$SYSROOT/lib/libLLVM.dylib" ]; then
+            ln -sf "$SYSROOT/lib/libLLVM.dylib" "$SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/libLLVM.dylib"
+          fi
+          dx bundle -r --macos --package-types dmg
+
+      # Coleta e organiza os artefatos de saída
+      - name: Stage Artifacts
+        shell: bash
+        run: |
+          mkdir -p dist-ide
+          IDE_VERSION=$(grep '^version = ' crates/uneven-ui/Cargo.toml | head -n 1 | cut -d '"' -f 2)
+          echo "Detected IDE version: ${IDE_VERSION}"
+
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            find target/ -type f \( -name "*.msi" -o -name "*setup*.exe" -o -name "*installer*.exe" \) | while read -r f; do
+              ext="${f##*.}"
+              cp "$f" "dist-ide/uneven-ide_${IDE_VERSION}_windows-x64.${ext}"
+            done
+            find target/dx/ -type f -name "*.exe" -exec cp {} dist-ide/ \; 2>/dev/null || true
+            if [ -f target/${{ matrix.target }}/release/uneven-ui.exe ]; then
+              cp target/${{ matrix.target }}/release/uneven-ui.exe dist-ide/uneven-ui-windows-x64.exe
+            elif [ -f target/release/uneven-ui.exe ]; then
+              cp target/release/uneven-ui.exe dist-ide/uneven-ui-windows-x64.exe
+            fi
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            find target/ -type f -name "*.dmg" | while read -r f; do
+              cp "$f" "dist-ide/uneven-ide_${IDE_VERSION}_darwin-arm64.dmg"
+            done
+            find target/ -maxdepth 6 -type d -name "*.app" | while read -r app_dir; do
+              echo "Packaging $app_dir to dist-ide/uneven-ide_${IDE_VERSION}_darwin-arm64.app.zip..."
+              ditto -c -k --sequesterRsrc --keepParent "$app_dir" "dist-ide/uneven-ide_${IDE_VERSION}_darwin-arm64.app.zip" || zip -r "dist-ide/uneven-ide_${IDE_VERSION}_darwin-arm64.app.zip" "$app_dir"
+            done
+            if [ -f target/${{ matrix.target }}/release/uneven-ui ]; then
+              cp target/${{ matrix.target }}/release/uneven-ui dist-ide/uneven-ui-darwin-arm64
+            elif [ -f target/release/uneven-ui ]; then
+              cp target/release/uneven-ui dist-ide/uneven-ui-darwin-arm64
+            fi
+          else
+            deb_file=$(find target/ -type f -name "*.deb" | head -n 1)
+            if [ -n "$deb_file" ]; then
+              echo "Found deb package: $deb_file -> renaming to uneven-ide_${IDE_VERSION}_amd64.deb"
+              cp "$deb_file" "dist-ide/uneven-ide_${IDE_VERSION}_amd64.deb"
+            fi
+            if [ -f target/${{ matrix.target }}/release/uneven-ui ]; then
+              cp target/${{ matrix.target }}/release/uneven-ui dist-ide/uneven-ui-linux-x64
+            elif [ -f target/release/uneven-ui ]; then
+              cp target/release/uneven-ui dist-ide/uneven-ui-linux-x64
+            fi
+          fi
+          echo "Staged IDE artifacts for ${{ matrix.platform }}:"
+          ls -la dist-ide/
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ide-${{ matrix.platform }}
+          path: dist-ide/*
+          if-no-files-found: error
+          retention-days: 7
+
+  # ── Package and Publish Release to Private Releases Repo ──────────────────────
+  release:
+    name: Publish Release to Private Repo
+    runs-on: ubuntu-24.04
+    needs: [build, build-ide]
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-binaries
+          merge-multiple: true
+
+      - name: Verify downloaded binaries
+        run: |
+          ls -la release-binaries/
+
+      - name: Publish Release to Private Repository
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo kreivesler/uneven-releases \
+            --title "Uneven Agent ${GITHUB_REF_NAME}" \
+            --generate-notes \
+            release-binaries/*
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}

@@ -238,8 +238,8 @@ fn submit_prompt(
         } else {
             state.read().active_session.clone()
         };
-        let pod_ask_override = active_pod_opt.as_ref().map(|p| uneven_core::infrastructure::security::laws::get_pod_context("ask", p));
-        let pod_think_override = active_pod_opt.as_ref().map(|p| uneven_core::infrastructure::security::laws::get_pod_context("think", p));
+        let pod_ask_override = active_pod_opt.as_ref().map(|p| uneven_core::infrastructure::security::laws::get_pod_context_in_root("ask", p, Some(&root)));
+        let pod_think_override = active_pod_opt.as_ref().map(|p| uneven_core::infrastructure::security::laws::get_pod_context_in_root("think", p, Some(&root)));
 
         let mut history_turns = uneven_core::infrastructure::llm::history_manager::get_history_from_disk(&sess_id, &root).unwrap_or_default();
         uneven_core::application::ContextCompactorService::auto_compact(&mut history_turns);
@@ -259,20 +259,38 @@ fn submit_prompt(
                 let maybe_pending = state.read().pending_patch.clone();
                 if let Some(file_obj) = maybe_pending {
                     let results = apply_file_actions(&root, &file_obj);
+                    let mut mutated_paths = Vec::new();
                     let pending_commands = state.read().thought_result.as_ref().map(|t| t.commands.clone()).unwrap_or_default();
                     let mut summary_lines = Vec::new();
                     summary_lines.push("✅ **Patches applied successfully:**\n".to_string());
                     for r in &results {
                         match &r.kind {
-                            PatchActionKind::Created(p) => summary_lines.push(format!("- Created `{}`", p)),
-                            PatchActionKind::Edited(p) => summary_lines.push(format!("- Edited `{}`", p)),
-                            PatchActionKind::Renamed { from, to } => summary_lines.push(format!("- Renamed `{}` → `{}`", from, to)),
-                            PatchActionKind::Deleted(p) => summary_lines.push(format!("- Deleted `{}`", p)),
-                            PatchActionKind::Appended { path, anchor } => summary_lines.push(format!("- Appended to `{}` (anchor: {})", path, anchor)),
+                            PatchActionKind::Created(p) => {
+                                mutated_paths.push(p.clone());
+                                summary_lines.push(format!("- Created `{}`", p));
+                            }
+                            PatchActionKind::Edited(p) => {
+                                mutated_paths.push(p.clone());
+                                summary_lines.push(format!("- Edited `{}`", p));
+                            }
+                            PatchActionKind::Renamed { from, to } => {
+                                mutated_paths.push(from.clone());
+                                mutated_paths.push(to.clone());
+                                summary_lines.push(format!("- Renamed `{}` → `{}`", from, to));
+                            }
+                            PatchActionKind::Deleted(p) => {
+                                mutated_paths.push(p.clone());
+                                summary_lines.push(format!("- Deleted `{}`", p));
+                            }
+                            PatchActionKind::Appended { path, anchor } => {
+                                mutated_paths.push(path.clone());
+                                summary_lines.push(format!("- Appended to `{}` (anchor: {})", path, anchor));
+                            }
                             PatchActionKind::Failed { path, reason } => summary_lines.push(format!("- ❌ Failed `{}`: {}", path, reason)),
                             PatchActionKind::SkippedUnsafe(p) => summary_lines.push(format!("- ⚠️ Skipped unsafe `{}`", p)),
                         }
                     }
+                    uneven_core::infrastructure::llm::history_manager::refresh_files_map_paths(&root, &mutated_paths);
                     if !pending_commands.is_empty() {
                         summary_lines.push("\n⚡ **Commands executed:**\n".to_string());
                         for cmd in &pending_commands {
@@ -354,7 +372,9 @@ fn submit_prompt(
             }
             ShellAction::Scan => {
                 state.write().thought_phase = Some(ThoughtPhase::ResolvingContext);
-                let target_dir = intent.clean_target_dir().unwrap_or_else(|| ".".to_string());
+                let target_dir = intent
+                    .clean_target_dir()
+                    .unwrap_or_else(|| root.to_string_lossy().to_string());
                 let config_clone = config.clone();
                 let root_clone = root.clone();
 
@@ -370,13 +390,22 @@ fn submit_prompt(
                     let _ = phase_tx.try_send(msg.to_string());
                 };
 
-                let scan_res = uneven_core::application::ScanService::run_scan(
-                    &root_clone,
-                    &target_dir,
-                    &config_clone,
-                    Some(on_progress),
-                )
-                .await;
+                let scan_res = tokio::spawn(async move {
+                    uneven_core::application::ScanService::run_scan(
+                        &root_clone,
+                        &target_dir,
+                        &config_clone,
+                        Some(on_progress),
+                    )
+                    .await
+                })
+                .await
+                .unwrap_or_else(|e| {
+                    Err(uneven_core::UnevenError::PentesterError(format!(
+                        "Scan background task failed: {}",
+                        e
+                    )))
+                });
 
                 state.write().thought_phase = None;
 
@@ -419,15 +448,24 @@ fn submit_prompt(
                     let _ = phase_tx.try_send(msg.to_string());
                 };
 
-                let pentest_res = uneven_core::application::PentestService::run_pentest(
-                    &root_clone,
-                    pentest_mode,
-                    &config_clone,
-                    true,
-                    true,
-                    Some(on_progress),
-                )
-                .await;
+                let pentest_res = tokio::spawn(async move {
+                    uneven_core::application::PentestService::run_pentest(
+                        &root_clone,
+                        pentest_mode,
+                        &config_clone,
+                        true,
+                        true,
+                        Some(on_progress),
+                    )
+                    .await
+                })
+                .await
+                .unwrap_or_else(|e| {
+                    Err(uneven_core::UnevenError::PentesterError(format!(
+                        "Pentest background task failed: {}",
+                        e
+                    )))
+                });
 
                 state.write().thought_phase = None;
 
@@ -471,15 +509,24 @@ fn submit_prompt(
                     let _ = phase_tx.try_send(msg.to_string());
                 };
 
-                let zd_res = uneven_core::application::ZerodayService::run_zeroday_scan(
-                    &root_clone,
-                    dir_override,
-                    &config_clone,
-                    true,
-                    is_deep,
-                    Some(on_progress),
-                )
-                .await;
+                let zd_res = tokio::spawn(async move {
+                    uneven_core::application::ZerodayService::run_zeroday_scan(
+                        &root_clone,
+                        dir_override,
+                        &config_clone,
+                        true,
+                        is_deep,
+                        Some(on_progress),
+                    )
+                    .await
+                })
+                .await
+                .unwrap_or_else(|e| {
+                    Err(uneven_core::UnevenError::PentesterError(format!(
+                        "Zero-day scan background task failed: {}",
+                        e
+                    )))
+                });
 
                 state.write().thought_phase = None;
 
@@ -564,7 +611,7 @@ fn submit_prompt(
 
                 state.write().thought_phase = Some(ThoughtPhase::Synthesizing);
 
-                let system_instructions = uneven_core::infrastructure::security::laws::get_context("analyze");
+                let system_instructions = uneven_core::infrastructure::security::laws::get_context_in_root("analyze", Some(&root));
                 let service = uneven_core::infrastructure::knowledge::AnalysisService::new(
                     analyst,
                     security.clone(),
@@ -807,7 +854,7 @@ fn submit_prompt(
                             match evt {
                                 SupervisorEvent::PlanningStarted => {
                                     state_for_events.write().active_subagent_info =
-                                        Some("👑 Prime: Devising Strategy".to_string());
+                                        Some("Prime".to_string());
                                     state_for_events.write().thought_phase =
                                         Some(ThoughtPhase::ResolvingContext);
                                 }
@@ -833,11 +880,10 @@ fn submit_prompt(
                                 SupervisorEvent::SubagentStarted {
                                     subagent_idx,
                                     total,
-                                    title,
                                     ..
                                 } => {
                                     state_for_events.write().active_subagent_info =
-                                        Some(format!("Worker #{}/{} [{}]", subagent_idx, total, title));
+                                        Some(format!("Worker {}/{}", subagent_idx, total));
                                     state_for_events.write().thought_phase =
                                         Some(ThoughtPhase::ResolvingContext);
                                 }
@@ -846,7 +892,7 @@ fn submit_prompt(
                                 }
                                 SupervisorEvent::EvaluatingSubagent { subagent_idx } => {
                                     state_for_events.write().active_subagent_info =
-                                        Some(format!("👑 Prime: Evaluating Worker #{}", subagent_idx));
+                                        Some(format!("Review {}", subagent_idx));
                                     state_for_events.write().thought_phase = Some(ThoughtPhase::Auditing);
                                 }
                                 SupervisorEvent::SubagentCompleted {

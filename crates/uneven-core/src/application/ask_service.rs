@@ -95,13 +95,14 @@ pub async fn execute_ask_with_system(
     // 4. Instructions & Prompt with Native Bilingual Protocol
     let base_law = system_override
         .map(|s| s.to_string())
-        .unwrap_or_else(|| laws::get_context("ask"));
+        .unwrap_or_else(|| laws::get_context_in_root("ask", Some(root)));
+    let base_law_with_directives = crate::domain::directives::with_directives_protocol(&base_law);
 
     let system_instructions = format!(
         "{}\n\n[COMMUNICATION DISCIPLINE]:\n\
         1. Human-Facing Response: Deliver all explanations, reasoning, and conceptual walkthroughs naturally in the user's primary language (e.g. Portuguese if asked in Portuguese).\n\
         2. Technical Precision: All code keywords, variable names, functions, structs, and file paths MUST strictly remain in English.",
-        base_law
+        base_law_with_directives
     );
 
     let raw_prompt = format!(

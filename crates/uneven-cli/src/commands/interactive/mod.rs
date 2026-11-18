@@ -1213,52 +1213,28 @@ pub async fn run() -> Result<()> {
                 let spinner_clone = spinner.clone();
                 let on_phase = move |phase: uneven_core::application::ThoughtPhase| match phase {
                     uneven_core::application::ThoughtPhase::ResolvingContext => {
-                        spinner_clone.set_message("Analyzing pod context…");
+                        spinner_clone.set_message("Context");
                     }
                     uneven_core::application::ThoughtPhase::Drafting => {
-                        spinner_clone.set_message(format!(
-                            "{} {}",
-                            style("[1/4]").bold().cyan(),
-                            style("Drafting pod solution…").dim()
-                        ));
+                        spinner_clone.set_message("Drafting");
                     }
                     uneven_core::application::ThoughtPhase::RubberDuckingDraft => {
-                        spinner_clone.set_message(format!(
-                            "{} {}",
-                            style("[🦆]").bold().cyan(),
-                            style("Rubber-ducking pod draft…").dim()
-                        ));
+                        spinner_clone.set_message("Reasoning");
                     }
                     uneven_core::application::ThoughtPhase::Auditing => {
-                        spinner_clone.set_message(format!(
-                            "{} {}",
-                            style("[2/4]").bold().yellow(),
-                            style("Auditing domain boundaries & security…").dim()
-                        ));
+                        spinner_clone.set_message("Auditing");
                     }
                     uneven_core::application::ThoughtPhase::VerifyingIntegrity => {
-                        spinner_clone.set_message(format!(
-                            "{} {}",
-                            style("[3/4]").bold().magenta(),
-                            style("Verifying layer isolation & integrity…").dim()
-                        ));
+                        spinner_clone.set_message("Verifying");
                     }
                     uneven_core::application::ThoughtPhase::RubberDuckingSimulation => {
-                        spinner_clone.set_message(format!(
-                            "{} {}",
-                            style("[🦆]").bold().magenta(),
-                            style("Rubber-ducking execution simulation…").dim()
-                        ));
+                        spinner_clone.set_message("Simulating");
                     }
                     uneven_core::application::ThoughtPhase::Synthesizing => {
-                        spinner_clone.set_message(format!(
-                            "{} {}",
-                            style("[4/4]").bold().green(),
-                            style("Synthesizing pod handoff…").dim()
-                        ));
+                        spinner_clone.set_message("Synthesizing");
                     }
                     uneven_core::application::ThoughtPhase::Completed => {
-                        spinner_clone.set_message("Pod mission complete.");
+                        spinner_clone.set_message("Done");
                     }
                 };
 

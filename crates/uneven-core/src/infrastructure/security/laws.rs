@@ -119,7 +119,7 @@ paths: <relative_path1, relative_path2>
   3. **General Chat & Fallback**: All conversational inputs, greetings, small talk, general questions, opinions, or open-ended thoughts (e.g., "hi", "how are you", "what do you think of interactive?"). If an input does not fit a specific CLI tool command, ALWAYS route to `think`.
 - **BEHAVIOR**:
   - For pure Q&A / inquiries without file mutations: provides clear technical explanations in Markdown without `### File:` blocks.
-  - For code mutation requests: inspects target file contents using system triggers (e.g., `[NEED_FILE]`) and presents the Unified Markdown Patch (`### File: <path>`, `**Action**: ...`). It DOES NOT touch disk until the user confirms and the next turn is routed to `dde`.
+  - For code mutation requests: inspects target file contents and presents the Unified Markdown Patch (`### File: <path>`, `**Action**: ...`). It DOES NOT touch disk until the user confirms and the next turn is routed to `dde`.
 
 ### `dde` (Direct Disk Execution - responsible for write file, edit file, rename file, delete file, create folder and file)
 - **PURPOSE**: Executing a clear, fully-specified mutation on disk ONLY when explicitly authorized or directly ordered.
@@ -216,7 +216,7 @@ Your role is to answer questions, explain concepts, analyze system architecture,
 - **User Communication (LANG-MATCHING)**: Explanations and answers MUST mirror the exact language used by the user in their interaction.
 
 ## Semantic Behavior & Guidelines
-1. **Dynamic Investigation**: Use triggers like `[NEED_FILE: relative/path/to/file]`, `[WEB_SEARCH: query]`, or `[WEB_URL: url]` if you need more context before answering.
+1. **Dynamic Investigation**: Request any missing workspace files or external documentation via the Available System Directives before answering.
 2. **Clear & Direct Explanations**: Provide comprehensive, highly informative explanations in clean Markdown.
 3. **Strictly Non-Mutating**: Do NOT solicit user confirmation to modify disk files or promise disk updates. Implementation planning and disk modifications are handled exclusively by the Think engine and DDE/Askf.
 "#;
@@ -233,24 +233,7 @@ Your operational purpose in this phase is to formulate an initial, concrete solu
 - **User Communication (LANG-MATCHING)**: Explanations, architectural reasoning, trade-off descriptions, and question prompts MUST mirror the exact language used by the user in their interaction.
 
 ## Core Operational Guidelines: Investigation & Context Acquisition
-- **Zero-Guessing Guard**: NEVER assume or fabricate function signatures, module imports, class structures, or file contents.
-- **Active Inspection & Skill Triggers**: If target files or specialized domain guidelines are needed, output ONE or MORE system triggers immediately:
-  * `[NEED_FILE: relative/path/to/file]` — Request full content of a workspace file.
-  * `[WEB_SEARCH: query]` — Search external library docs, API references, or error messages.
-  * `[WEB_URL: url]` — Fetch full documentation content from a web page.
-  * `[USE_SKILL: skill_name]` — Dynamically load operational best-practice guidelines for a specialized domain (e.g. `[USE_SKILL: explain]`, `[USE_SKILL: docs]`).
-
-### Specialized Operational Skills (Available on Demand)
-You can dynamically load operational best practices by emitting `[USE_SKILL: <skill_name>]`:
-- `explain`: Best practices for architectural decomposition, component lifecycles, and visual Mermaid diagrams (`flowchart TD`, `sequenceDiagram`).
-- `docs`: Best practices for idiomatic polyglot documentation comments (`///` Rustdoc with `# Arguments`, `# Returns`, `# Errors`; TSDoc `@param`, `@returns`; Python Google docstrings; GoDoc) and unified patch generation for `patch_engine`.
-
-### Autonomous Agent Pod Orchestration (AI Decision)
-Agent Pods are domain-specialized architectural clusters (e.g., Database, Backend, Frontend, Auth & Security, DevOps).
-Users cannot manually create Pods; this choice is strictly made by you (the AI).
-When you identify an architectural subsystem that warrants isolated focus, specialized law, and domain boundaries, you can autonomously instantiate an Agent Pod by including this tag in your response:
-`[CREATE_POD: <Pod Title> | <Prime Specialist Role> | <Instructions> | <file1>, <file2>]`
-The system will automatically persist the new Pod in `.uneven/pods.json` for visibility in the IDE and CLI.
+- **Zero-Guessing Guard**: NEVER assume or fabricate function signatures, module imports, class structures, or file contents. Use the Available System Directives whenever workspace files, external docs, or built-in skills are needed.
 "#;
 
 pub const CONTEXT_THINK_RUBBER_DUCK_DRAFT: &str = r#"
@@ -386,7 +369,7 @@ Evaluate the task scope, complexity, and whether an approved plan already exists
 
 - **Case D: Approved Plan Execution or Follow-up Confirmation**:
   When the user confirms or approves a previously presented plan (or commands autonomous execution):
-  1. **Direct Concrete Patches & Commands**: Dedicate 100% of your output token budget to generating the complete, robust Markdown patches (`### File: <path>`, `**Action**: edit/create`) for all planned files without truncation, and any CLI commands via `[EXEC_CMD: <command>]`.
+  1. **Direct Concrete Patches & Commands**: Dedicate 100% of your output token budget to generating the complete, robust Markdown patches (`### File: <path>`, `**Action**: edit/create`) for all planned files without truncation, plus any required CLI command directives.
   2. Do NOT ask for confirmation again. Directly produce the deterministic patch blocks and command directives ready for immediate application:
      ### File: <relative_path>
      **Action**: `edit`
@@ -398,12 +381,10 @@ Evaluate the task scope, complexity, and whether an approved plan already exists
      >>>>>>> REPLACE
      ```
      (Or `create`, `append`, `delete`, `rename`).
-  3. If terminal commands are required (such as project scaffolding, package installation, or builds), emit `[EXEC_CMD: <command>]`.
-  4. Confirm that the patch and commands are ready for execution by `patch_engine`.
+  3. Confirm that the patch and commands are ready for execution by `patch_engine`.
 
 ## Terminal Command Execution & Project Toolchain
 When a task benefits from executing terminal commands natively (such as project bootstrapping, dependency management, compilation checks, or running test suites with the project's native toolchain):
-- Emit command directives using the tag: `[EXEC_CMD: <command>]`.
 - When bootstrapping or initializing a new project or module, PREFER using the standard ecosystem CLI toolchain of the target technology rather than manually synthesizing boilerplate files, unless custom non-standard structures are required.
 - The system validates every command through security policies and executes it directly inside the project root.
 "#;
@@ -611,8 +592,17 @@ If the repository configuration indicates that *autoFix* is disabled (`watch.aut
 
 pub const DEFAULT_PERSONA: &str = "You are a senior software engineer and QA specialist. Dynamic Investigation & Architectural Planning Act as an expert software architect, code auditor, and collaborative senior developer. Your primary mission is to analyze logic, investigate bugs, answer architectural questions, and build non-breaking execution plans.";
 
-/// Returns the exact context string for the specified command.
+/// Returns the exact context string for the specified command using the current working directory.
 pub fn get_context(command: &str) -> String {
+    get_context_in_root(command, None)
+}
+
+/// Returns the exact context string for the specified command resolved against `project_root`
+/// (falling back to `std::env::current_dir()` when `None`).
+///
+/// Workspace skills are intentionally decoupled from `"shell"` so the intent classifier
+/// stays compact and focused on routing.
+pub fn get_context_in_root(command: &str, project_root: Option<&std::path::Path>) -> String {
     let base = match command {
         "analyze" => CONTEXT_ANALYZE.to_string(),
         "ask" => CONTEXT_ASK.to_string(),
@@ -637,11 +627,15 @@ pub fn get_context(command: &str) -> String {
     let mut skills_content = String::new();
     let mut custom_persona = None;
 
+    let workspace_root = project_root
+        .map(|p| p.to_path_buf())
+        .or_else(|| std::env::current_dir().ok());
+
     // Dynamically load project-level custom rules/guidelines (e.g. AGENTS.md or rules.md)
-    if let Ok(cwd) = std::env::current_dir() {
+    if let Some(root) = workspace_root {
         let paths_to_check = vec![
-            cwd.join(".uneven").join("rules.md"),
-            cwd.join(".agents").join("AGENTS.md"),
+            root.join(".uneven").join("rules.md"),
+            root.join(".agents").join("AGENTS.md"),
         ];
 
         for path in paths_to_check {
@@ -654,50 +648,56 @@ pub fn get_context(command: &str) -> String {
             }
         }
 
-        // Dynamically load custom workspace skills (e.g. .agents/skills/* or .uneven/skills/*)
-        let mut skills_dirs = vec![
-            cwd.join(".agents").join("skills"),
-            cwd.join(".uneven").join("skills"),
-        ];
-
-        if let Ok(config) = crate::infrastructure::config::loader::load_config(&cwd) {
+        let loaded_config = crate::infrastructure::config::loader::load_config(&root).ok();
+        if let Some(ref config) = loaded_config {
             custom_persona = config.persona.clone();
-            if let Some(ref custom_skills) = config.skills {
+        }
+
+        // Decouple user/workspace skills from the shell intent classifier
+        if command != "shell" {
+            let mut skills_dirs = vec![
+                root.join(".agents").join("skills"),
+                root.join(".uneven").join("skills"),
+            ];
+
+            if let Some(ref config) = loaded_config
+                && let Some(ref custom_skills) = config.skills
+            {
                 let custom_path = std::path::PathBuf::from(custom_skills);
                 if custom_path.is_absolute() {
                     skills_dirs.push(custom_path);
                 } else {
-                    skills_dirs.push(cwd.join(custom_path));
+                    skills_dirs.push(root.join(custom_path));
                 }
             }
-        }
 
-        for dir in skills_dirs {
-            if dir.exists()
-                && dir.is_dir()
-                && let Ok(entries) = std::fs::read_dir(dir)
-            {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
-                        if let Ok(content) = std::fs::read_to_string(&path) {
-                            skills_content.push_str(&format!(
-                                "\n--- Skill: {} ---\n",
-                                path.file_stem().unwrap().to_string_lossy()
-                            ));
-                            skills_content.push_str(&content);
-                        }
-                    } else if path.is_dir() {
-                        let skill_md = path.join("SKILL.md");
-                        if skill_md.exists()
-                            && skill_md.is_file()
-                            && let Ok(content) = std::fs::read_to_string(&skill_md)
-                        {
-                            skills_content.push_str(&format!(
-                                "\n--- Skill: {} ---\n",
-                                path.file_name().unwrap().to_string_lossy()
-                            ));
-                            skills_content.push_str(&content);
+            for dir in skills_dirs {
+                if dir.exists()
+                    && dir.is_dir()
+                    && let Ok(entries) = std::fs::read_dir(dir)
+                {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
+                            if let Ok(content) = std::fs::read_to_string(&path) {
+                                skills_content.push_str(&format!(
+                                    "\n--- Skill: {} ---\n",
+                                    path.file_stem().unwrap().to_string_lossy()
+                                ));
+                                skills_content.push_str(&content);
+                            }
+                        } else if path.is_dir() {
+                            let skill_md = path.join("SKILL.md");
+                            if skill_md.exists()
+                                && skill_md.is_file()
+                                && let Ok(content) = std::fs::read_to_string(&skill_md)
+                            {
+                                skills_content.push_str(&format!(
+                                    "\n--- Skill: {} ---\n",
+                                    path.file_name().unwrap().to_string_lossy()
+                                ));
+                                skills_content.push_str(&content);
+                            }
                         }
                     }
                 }
@@ -738,7 +738,16 @@ pub fn get_agent_protocols() -> String {
 
 /// Returns specialized context law for an Agent Pod enforcing strict domain focus and boundary isolation.
 pub fn get_pod_context(base_command: &str, pod: &crate::domain::pod::AgentPod) -> String {
-    let base = get_context(base_command);
+    get_pod_context_in_root(base_command, pod, None)
+}
+
+/// Returns specialized context law for an Agent Pod resolved against `project_root`.
+pub fn get_pod_context_in_root(
+    base_command: &str,
+    pod: &crate::domain::pod::AgentPod,
+    project_root: Option<&std::path::Path>,
+) -> String {
+    let base = get_context_in_root(base_command, project_root);
     let target_files = if pod.target_files.is_empty() {
         "Domain-specific files across the project".to_string()
     } else {
@@ -906,5 +915,24 @@ mod tests {
 
         let default_think = get_context("think");
         assert_eq!(default_think, draft);
+    }
+
+    #[test]
+    fn test_get_context_in_root_decouples_shell_skills() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join(".uneven/skills")).unwrap();
+        fs::write(
+            temp.path().join(".uneven/skills/custom.md"),
+            "SECRET_WORKSPACE_SKILL_TEXT",
+        )
+        .unwrap();
+
+        let shell_ctx = get_context_in_root("shell", Some(temp.path()));
+        assert!(!shell_ctx.contains("ADDITIONAL WORKSPACE SKILLS"));
+        assert!(!shell_ctx.contains("SECRET_WORKSPACE_SKILL_TEXT"));
+
+        let draft_ctx = get_context_in_root("think_draft", Some(temp.path()));
+        assert!(draft_ctx.contains("ADDITIONAL WORKSPACE SKILLS"));
+        assert!(draft_ctx.contains("SECRET_WORKSPACE_SKILL_TEXT"));
     }
 }

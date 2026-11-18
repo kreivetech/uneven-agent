@@ -1,5 +1,14 @@
 use super::context_assembler::ContextAssembler;
 use crate::domain::config::BrainConfig;
+use crate::domain::directives::{
+    parse_directives, resolve_builtin_skill, strip_directives, with_directives_protocol,
+    AgentDirective,
+};
+use crate::domain::files_map::FilesMapIndex;
+use crate::infrastructure::llm::history_manager::{
+    load_or_build_files_map, BlockStrategy, BrainTurn, ContextOptimizer, LAW_END, LAW_START,
+    MAP_END, MAP_START,
+};
 use crate::infrastructure::llm::inference::chat_template::{apply_template, detect_template};
 use crate::infrastructure::llm::{
     infer_with_params_streaming, init as init_llm, InferParams,
@@ -168,6 +177,133 @@ pub async fn run_single_turn(
         Ok(Err(e)) => Err(e.into()),
         Err(e) => Err(anyhow::anyhow!("Inference panicked: {}", e)),
     }
+}
+
+/// Absorbs any `[USE_SKILL: ...]` or `[NEED_DIR: ...]` directives emitted by a stage.
+fn absorb_stage_directives(
+    stage_output: &str,
+    loaded_skills: &mut HashSet<String>,
+    skill_guidelines: &mut String,
+    files_index: &FilesMapIndex,
+    think_history: &mut Vec<BrainTurn>,
+) {
+    let mut expanded_dirs = Vec::new();
+    for directive in parse_directives(stage_output) {
+        match directive {
+            AgentDirective::UseSkill(s) => {
+                if loaded_skills.insert(s.clone())
+                    && let Some(instructions) = resolve_builtin_skill(&s)
+                {
+                    skill_guidelines.push_str(&format!(
+                        "\n\n---\n## OPERATIONAL GUIDELINES: {}\n{}\n---\n",
+                        s.to_uppercase(),
+                        instructions
+                    ));
+                }
+            }
+            AgentDirective::NeedDir { id, page } => {
+                if let Some(listing) = files_index.render_group(id, page, 50) {
+                    expanded_dirs.push(listing);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if !expanded_dirs.is_empty() {
+        think_history.push(BrainTurn {
+            role: "user".to_string(),
+            content: format!("### Expanded Directory Groups\n{}", expanded_dirs.join("\n\n")),
+        });
+    }
+}
+
+/// Executes a stage of the `think` loop using `contextcraft::optimize_context` over an internal
+/// `Vec<BrainTurn>` so the stage law replaces any prior rule in-place without duplicating context.
+async fn run_think_turn(
+    think_history: &mut Vec<BrainTurn>,
+    raw_prompt: &str,
+    stage_law: &str,
+    context_map: Option<&str>,
+    brain: &BrainConfig,
+    threads: u32,
+    max_context: usize,
+) -> Result<String> {
+    let effective_law = with_directives_protocol(stage_law);
+    let mut optimizer = ContextOptimizer::new()
+        .with_custom_tags(LAW_START, LAW_END, &effective_law, BlockStrategy::UpdateInPlace);
+    if let Some(map) = context_map.filter(|m| !m.trim().is_empty()) {
+        optimizer = optimizer.with_custom_tags(MAP_START, MAP_END, map, BlockStrategy::UpdateInPlace);
+    }
+    let optimized_prompt = optimizer.optimize(think_history, raw_prompt);
+
+    let api_history: Vec<(String, String)> = think_history
+        .iter()
+        .map(|turn| (turn.role.clone(), turn.content.clone()))
+        .collect();
+
+    let chat_template = detect_template(&brain.model);
+    let prompt_to_use = if brain.provider == "local" {
+        let local_turns: Vec<crate::infrastructure::llm::inference::chat_template::ChatTurn> =
+            think_history
+                .iter()
+                .map(|t| crate::infrastructure::llm::inference::chat_template::ChatTurn {
+                    role: t.role.clone(),
+                    content: t.content.clone(),
+                })
+                .collect();
+        apply_template(&chat_template, &effective_law, &local_turns, &optimized_prompt)
+    } else {
+        optimized_prompt.clone()
+    };
+
+    let params = InferParams {
+        model: brain.model.clone(),
+        threads,
+        max_tokens: brain.max_tokens,
+        temperature: brain.temperature as f64,
+        repeat_penalty: 1.1,
+        max_context,
+        grammar: None,
+        provider: Some(brain.provider.clone()),
+        system: Some(effective_law),
+        history: if api_history.is_empty() {
+            None
+        } else {
+            Some(api_history)
+        },
+    };
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(100);
+    let prompt_clone = prompt_to_use;
+    let inference_handle = tokio::spawn(async move {
+        infer_with_params_streaming(&prompt_clone, &params, move |token| {
+            let _ = tx.try_send(token);
+        })
+        .await
+    });
+
+    let mut turn_response = String::new();
+    while let Some(token) = rx.recv().await {
+        turn_response.push_str(&token);
+    }
+
+    let content = match inference_handle.await {
+        Ok(Ok(r)) => r.content,
+        Ok(Err(e)) => return Err(e.into()),
+        Err(e) => return Err(anyhow::anyhow!("Inference panicked: {}", e)),
+    };
+
+    think_history.push(BrainTurn {
+        role: "user".to_string(),
+        content: optimized_prompt,
+    });
+    think_history.push(BrainTurn {
+        role: "assistant".to_string(),
+        content: content.clone(),
+    });
+
+    Ok(content)
 }
 
 /// Executes a full 4-turn reflective reasoning loop:
@@ -364,18 +500,27 @@ where
         }
     }
 
-    // Assemble recent conversation history if provided
-    let mut conversation_context = String::new();
-    if let Some(hist) = history {
-        let recent_turns: Vec<_> = hist.iter().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect();
-        if !recent_turns.is_empty() {
-            conversation_context.push_str("### Recent Conversation History:\n");
-            for turn in recent_turns {
-                let role = if turn.role == "user" { "User" } else { "Assistant" };
-                conversation_context.push_str(&format!("{}: {}\n\n", role, turn.content.trim()));
-            }
-        }
-    }
+    let files_index = load_or_build_files_map(root);
+    let compact_files_map = files_index.render_compact_index();
+    let full_map_context = if compact_files_map.is_empty() {
+        context_block.clone()
+    } else {
+        format!("### Directory Groups (use [NEED_DIR: id] to expand)\n{}\n\n{}", compact_files_map, context_block)
+    };
+
+    // Seed internal think history with the last 6 conversation turns (if provided)
+    let mut think_history: Vec<BrainTurn> = if let Some(hist) = history {
+        hist.iter()
+            .rev()
+            .take(6)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     // ─────────────────────────────────────────────────────────────────────────────
     // TURN 1: Draft Proposal (Actor)
@@ -386,7 +531,7 @@ where
 
     let mut draft_base = system_override
         .map(|s| s.to_string())
-        .unwrap_or_else(|| laws::get_context("think_draft"));
+        .unwrap_or_else(|| laws::get_context_in_root("think_draft", Some(root)));
     if !skill_guidelines.is_empty() {
         draft_base.push_str(&skill_guidelines);
     }
@@ -395,33 +540,24 @@ where
         "{}\n\n[PHASE: DRAFTING - Produce an initial concrete solution, architecture plan, and preliminary diffs.]",
         draft_base
     );
-    let draft_prompt = if !conversation_context.is_empty() {
-        format!(
-            "{}\n{}\nUser Request: {}\n\nFormulate a preliminary solution plan and the necessary code changes.",
-            context_block, conversation_context, task
-        )
-    } else {
-        format!(
-            "{}\nUser Request: {}\n\nFormulate a preliminary solution plan and the necessary code changes.",
-            context_block, task
-        )
-    };
+    let draft_prompt = format!(
+        "User Request: {}\n\nFormulate a preliminary solution plan and the necessary code changes.",
+        task
+    );
 
-    let draft_response = run_single_turn(&draft_prompt, &draft_system, &brain, threads, max_context)
-        .await
-        .map_err(|e| anyhow::anyhow!("Draft phase failed: {}", e))?;
+    let draft_response = run_think_turn(
+        &mut think_history,
+        &draft_prompt,
+        &draft_system,
+        Some(&full_map_context),
+        &brain,
+        threads,
+        max_context,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Draft phase failed: {}", e))?;
 
-    let draft_skills = crate::domain::skills::parse_use_skill_tags(&draft_response);
-    for s in draft_skills {
-        if loaded_skills.insert(s.clone())
-            && let Some(instructions) = crate::domain::skills::get_builtin_skill(&s) {
-                skill_guidelines.push_str(&format!(
-                    "\n\n---\n## OPERATIONAL GUIDELINES: {}\n{}\n---\n",
-                    s.to_uppercase(),
-                    instructions
-                ));
-            }
-    }
+    absorb_stage_directives(&draft_response, &mut loaded_skills, &mut skill_guidelines, &files_index, &mut think_history);
 
     // ─────────────────────────────────────────────────────────────────────────────
     // INTERMEDIATE 1: Rubber Duck Problem Decomposition (Unpacking Draft)
@@ -430,19 +566,24 @@ where
         cb(ThoughtPhase::RubberDuckingDraft);
     }
 
-    let duck_draft_system = laws::get_context("think_duck_draft");
-    let duck_draft_prompt = format!(
-        "### User Original Request:\n{}\n\n### Proposed Solution Draft:\n{}\n\n\
-        In 3 to 4 concise technical bullet points, explain your draft to your Rubber Duck:\n\
+    let duck_draft_system = laws::get_context_in_root("think_duck_draft", Some(root));
+    let duck_draft_prompt = "\
+        In 3 to 4 concise technical bullet points, explain your draft above to your Rubber Duck:\n\
         1. Core Mechanism: What approach was chosen and why over alternatives?\n\
         2. Implicit Assumptions: What types, system states, or caller contracts are assumed?\n\
-        3. Fragility & Edge Cases: Where is this most vulnerable to failure under unexpected conditions?",
-        task, draft_response
-    );
+        3. Fragility & Edge Cases: Where is this most vulnerable to failure under unexpected conditions?";
 
-    let duck_draft_reflection = run_single_turn(&duck_draft_prompt, &duck_draft_system, &brain, threads, max_context)
-        .await
-        .unwrap_or_else(|_| "Rubber Duck Draft reflection unavailable.".to_string());
+    let duck_draft_reflection = run_think_turn(
+        &mut think_history,
+        duck_draft_prompt,
+        &duck_draft_system,
+        Some(&full_map_context),
+        &brain,
+        threads,
+        max_context,
+    )
+    .await
+    .unwrap_or_else(|_| "Rubber Duck Draft reflection unavailable.".to_string());
 
     // ─────────────────────────────────────────────────────────────────────────────
     // TURN 2: Internal Critic & Contextual Audit (The Critic Loop)
@@ -451,23 +592,22 @@ where
         cb(ThoughtPhase::Auditing);
     }
 
-    let critic_system = laws::get_context("think_audit");
+    let critic_system = laws::get_context_in_root("think_audit", Some(root));
+    let critic_prompt = "Perform the contextual self-critique and audit of the proposed draft above, enumerating any required corrections.";
 
-    let critic_prompt = if !conversation_context.is_empty() {
-        format!(
-            "{}\n### User Request:\n{}\n\n### Codebase Context:\n{}\n\n### Initial Solution Draft:\n{}\n\n### Rubber Duck Self-Reflection:\n{}\n\nPerform the contextual self-critique and audit, enumerating any required corrections.",
-            conversation_context, task, context_block, draft_response, duck_draft_reflection
-        )
-    } else {
-        format!(
-            "### User Original Request:\n{}\n\n### Codebase Context:\n{}\n\n### Initial Solution Draft:\n{}\n\n### Rubber Duck Self-Reflection:\n{}\n\nPerform the contextual self-critique and audit, enumerating any required corrections.",
-            task, context_block, draft_response, duck_draft_reflection
-        )
-    };
+    let critic_findings = run_think_turn(
+        &mut think_history,
+        critic_prompt,
+        &critic_system,
+        Some(&full_map_context),
+        &brain,
+        threads,
+        max_context,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Critic audit phase failed: {}", e))?;
 
-    let critic_findings = run_single_turn(&critic_prompt, &critic_system, &brain, threads, max_context)
-        .await
-        .map_err(|e| anyhow::anyhow!("Critic audit phase failed: {}", e))?;
+    absorb_stage_directives(&critic_findings, &mut loaded_skills, &mut skill_guidelines, &files_index, &mut think_history);
 
     // ─────────────────────────────────────────────────────────────────────────────
     // TURN 3: Scope & Code Integrity Guard (Anti-Regression & Anti-Hallucination)
@@ -476,23 +616,22 @@ where
         cb(ThoughtPhase::VerifyingIntegrity);
     }
 
-    let integrity_system = laws::get_context("think_integrity");
+    let integrity_system = laws::get_context_in_root("think_integrity", Some(root));
+    let integrity_prompt = "Perform the Scope & Code Integrity Check against the draft and critic findings above, and provide your verdict.";
 
-    let integrity_prompt = if !conversation_context.is_empty() {
-        format!(
-            "{}\n### User Request:\n{}\n\n### Codebase Context:\n{}\n\n### Proposed Solution Draft:\n{}\n\n### Critic Audit Findings:\n{}\n\nPerform the Scope & Code Integrity Check and provide your verdict.",
-            conversation_context, task, context_block, draft_response, critic_findings
-        )
-    } else {
-        format!(
-            "### User Original Request:\n{}\n\n### Codebase Context:\n{}\n\n### Proposed Solution Draft:\n{}\n\n### Critic Audit Findings:\n{}\n\nPerform the Scope & Code Integrity Check and provide your verdict.",
-            task, context_block, draft_response, critic_findings
-        )
-    };
+    let integrity_findings = run_think_turn(
+        &mut think_history,
+        integrity_prompt,
+        &integrity_system,
+        Some(&full_map_context),
+        &brain,
+        threads,
+        max_context,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Integrity verification phase failed: {}", e))?;
 
-    let integrity_findings = run_single_turn(&integrity_prompt, &integrity_system, &brain, threads, max_context)
-        .await
-        .map_err(|e| anyhow::anyhow!("Integrity verification phase failed: {}", e))?;
+    absorb_stage_directives(&integrity_findings, &mut loaded_skills, &mut skill_guidelines, &files_index, &mut think_history);
 
     // ─────────────────────────────────────────────────────────────────────────────
     // INTERMEDIATE 2: Rubber Duck Pre-Flight Execution Simulation (Dry-Run Walkthrough)
@@ -501,19 +640,24 @@ where
         cb(ThoughtPhase::RubberDuckingSimulation);
     }
 
-    let duck_sim_system = laws::get_context("think_duck_simulation");
-    let duck_sim_prompt = format!(
-        "### User Original Request:\n{}\n\n### Proposed Solution Draft:\n{}\n\n### Critic Audit Findings:\n{}\n\n### Scope & Integrity Directives:\n{}\n\n\
+    let duck_sim_system = laws::get_context_in_root("think_duck_simulation", Some(root));
+    let duck_sim_prompt = "\
         Walk through the execution flow with your Rubber Duck in 3 to 4 concise bullet points:\n\
         1. Step-by-Step Runtime Trace: Trace execution from entry to exit with expected types/returns.\n\
         2. Reconciliation Check: Confirm all Critic & Integrity points are accounted for.\n\
-        3. Import & Contract Defense: Ensure no missing imports or broken external callers.",
-        task, draft_response, critic_findings, integrity_findings
-    );
+        3. Import & Contract Defense: Ensure no missing imports or broken external callers.";
 
-    let duck_simulation_trace = run_single_turn(&duck_sim_prompt, &duck_sim_system, &brain, threads, max_context)
-        .await
-        .unwrap_or_else(|_| "Rubber Duck Simulation trace unavailable.".to_string());
+    let duck_simulation_trace = run_think_turn(
+        &mut think_history,
+        duck_sim_prompt,
+        &duck_sim_system,
+        Some(&full_map_context),
+        &brain,
+        threads,
+        max_context,
+    )
+    .await
+    .unwrap_or_else(|_| "Rubber Duck Simulation trace unavailable.".to_string());
 
     // ─────────────────────────────────────────────────────────────────────────────
     // TURN 4: Synthesis & Final Assured Patch
@@ -524,7 +668,7 @@ where
 
     let mut synthesis_base = system_override
         .map(|s| s.to_string())
-        .unwrap_or_else(|| laws::get_context("think_synthesis"));
+        .unwrap_or_else(|| laws::get_context_in_root("think_synthesis", Some(root)));
     if !skill_guidelines.is_empty() {
         synthesis_base.push_str(&skill_guidelines);
     }
@@ -534,39 +678,28 @@ where
         synthesis_base
     );
 
-    let synthesis_prompt = if !conversation_context.is_empty() {
-        format!(
-            "{}\n### User Request:\n{}\n\n### Context:\n{}\n\n### Initial Draft:\n{}\n\n### Internal Critic Audit Findings:\n{}\n\n### Scope & Code Integrity Directives:\n{}\n\n### Pre-Flight Rubber Duck Simulation:\n{}\n\n\
-            Produce the FINAL, flawless response for the user in clean Markdown:\n\
-            1. Human-Facing Overview & Explanations: Formulate naturally in the user's primary language without robotic, bureaucratic, or unnatural phrasing.\n\
-            2. Technical & Code Discipline: All source code, diff hunks, functions, variable names, and comments MUST strictly remain in English.\n\
-            3. Adaptive Code Mutation & Presentation Strategy:\n\
-               - If executing an approved plan or follow-up confirmation from the conversation: output the exact, surgical Markdown file actions ('Action: create' with complete content or 'Action: edit' with SEARCH/REPLACE blocks) ready for immediate disk application. Do NOT ask for confirmation again.\n\
-               - For micro-mutations: output exact surgical Markdown file actions.\n\
-               - For medium/large multi-file architecture tasks proposed for the first time without prior approval: present the Architectural Blueprint first and ask naturally if the user would like to proceed.\n\
-               - For pure conceptual Q&A: do not output any file actions.\n\
-            4. Terminal Commands Execution: When a task benefits from executing terminal commands natively (such as project bootstrapping, dependency management, compilation checks, or running test suites with the project's native toolchain), emit `[EXEC_CMD: <command>]`. Prefer using the standard ecosystem CLI toolchain of the target technology for scaffolding rather than manually synthesizing boilerplate files.",
-            conversation_context, task, context_block, draft_response, critic_findings, integrity_findings, duck_simulation_trace
-        )
-    } else {
-        format!(
-            "### User Request:\n{}\n\n### Context:\n{}\n\n### Initial Draft:\n{}\n\n### Internal Critic Audit Findings:\n{}\n\n### Scope & Code Integrity Directives:\n{}\n\n### Pre-Flight Rubber Duck Simulation:\n{}\n\n\
-            Produce the FINAL, flawless response for the user in clean Markdown:\n\
-            1. Human-Facing Overview & Explanations: Formulate naturally in the user's primary language without robotic, bureaucratic, or unnatural phrasing.\n\
-            2. Technical & Code Discipline: All source code, diff hunks, functions, variable names, and comments MUST strictly remain in English.\n\
-            3. Adaptive Code Mutation & Presentation Strategy:\n\
-               - If executing an approved plan or follow-up confirmation: output exact, surgical Markdown file actions ('Action: create' with complete content or 'Action: edit' with SEARCH/REPLACE blocks) ready for disk application. Do NOT ask for confirmation again.\n\
-               - For micro-mutations: output exact surgical Markdown file actions.\n\
-               - For medium/large multi-file architecture tasks proposed for the first time without prior approval: present the Architectural Blueprint first and ask naturally if the user would like to proceed.\n\
-               - For pure conceptual Q&A: do not output any file actions.\n\
-            4. Terminal Commands Execution: When a task benefits from executing terminal commands natively (such as project bootstrapping, dependency management, compilation checks, or running test suites with the project's native toolchain), emit `[EXEC_CMD: <command>]`. Prefer using the standard ecosystem CLI toolchain of the target technology for scaffolding rather than manually synthesizing boilerplate files.",
-            task, context_block, draft_response, critic_findings, integrity_findings, duck_simulation_trace
-        )
-    };
+    let synthesis_prompt = "\
+        Produce the FINAL, flawless response for the user in clean Markdown:\n\
+        1. Human-Facing Overview & Explanations: Formulate naturally in the user's primary language without robotic, bureaucratic, or unnatural phrasing.\n\
+        2. Technical & Code Discipline: All source code, diff hunks, functions, variable names, and comments MUST strictly remain in English.\n\
+        3. Adaptive Code Mutation & Presentation Strategy:\n\
+           - If executing an approved plan or follow-up confirmation from the conversation: output the exact, surgical Markdown file actions ('Action: create' with complete content or 'Action: edit' with SEARCH/REPLACE blocks) ready for immediate disk application. Do NOT ask for confirmation again.\n\
+           - For micro-mutations: output exact surgical Markdown file actions.\n\
+           - For medium/large multi-file architecture tasks proposed for the first time without prior approval: present the Architectural Blueprint first and ask naturally if the user would like to proceed.\n\
+           - For pure conceptual Q&A: do not output any file actions.\n\
+        4. Terminal Commands Execution: When a task benefits from executing terminal commands natively (such as project bootstrapping, dependency management, compilation checks, or running test suites with the project's native toolchain), emit `[EXEC_CMD: <command>]`. Prefer using the standard ecosystem CLI toolchain of the target technology for scaffolding rather than manually synthesizing boilerplate files.";
 
-    let final_answer = run_single_turn(&synthesis_prompt, &synthesis_system, &brain, threads, max_context)
-        .await
-        .map_err(|e| anyhow::anyhow!("Synthesis phase failed: {}", e))?;
+    let final_answer = run_think_turn(
+        &mut think_history,
+        synthesis_prompt,
+        &synthesis_system,
+        Some(&full_map_context),
+        &brain,
+        threads,
+        max_context,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Synthesis phase failed: {}", e))?;
 
     // 6. Sanitize response with Security Guard
     let sanitized_answer = safety.sanitize_response(&final_answer);
@@ -579,9 +712,8 @@ where
     let parsed_file_obj = file_object(&sanitized_answer, &session_id);
     let parsed_commands = parse_exec_cmd_tags(&sanitized_answer);
 
-    // 9. Clean chat proposal for human readability (strips internal skill tags, exec tags, and replaces machine SEARCH/REPLACE blocks with clean diffs)
-    let clean_output = crate::domain::skills::strip_use_skill_tags(&sanitized_answer);
-    let clean_output = strip_exec_cmd_tags(&clean_output);
+    // 9. Clean chat proposal for human readability (strips internal directives and replaces machine SEARCH/REPLACE blocks with clean diffs)
+    let clean_output = strip_directives(&sanitized_answer);
     let display_proposal = if parsed_file_obj.is_some() {
         clean_chat_proposal(&clean_output)
     } else {

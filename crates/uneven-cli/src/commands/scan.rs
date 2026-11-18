@@ -37,11 +37,6 @@ pub async fn run(dir: String, report: bool, json_output: bool) -> Result<()> {
     let root = loader::find_project_root(None);
     let config = loader::load_config(&root)?;
 
-    // License Check / Free limit
-    if !super::license::check_pro() {
-        super::license::check_session_limit("scan", 2, 6 * 3600)?;
-    }
-
     // Ensure .uneven/logs exists
     let uneven_dir = root.join(".uneven");
     let logs_dir = uneven_dir.join("logs");

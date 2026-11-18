@@ -2,6 +2,14 @@
 
 All notable changes to Uneven Agent are documented in this file.
 
+## [v2.4.0] — November 2026
+
+- **Non-Blocking Security Scans & Batch LLM Review (`scan` / `pentest` / `zeroday`)** — Offloaded static analysis, supply-chain audits, `npm audit`, file counting, and report/SBOM generation off the Dioxus UI thread (`tokio::spawn` + `tokio::task::spawn_blocking`), resolved target paths against `project_root`, and batched `LLMSecurityReviewer` into a single Markdown review request with a ±5 line context window and dynamic model token/context limits.
+- **Minimalist Think & Subagent HUD (`uneven-ui` v0.2.3)** — Redesigned `ThinkStepper` and `StatusBar` into compact, left-aligned 1-word phase pills (`Context`, `Drafting`, `Reasoning`, `Auditing`, `Verifying`, `Simulating`, `Synthesizing`) with a separate inline subagent badge (`Prime`, `Worker X/Y`, `Review X`).
+- **Unified `AgentDirective` & `contextcraft` Reasoning Pipeline** — Added `domain::directives` (`AgentDirective`, `DIRECTIVES_PROTOCOL`, `parse_directives`, `strip_directives`, `resolve_builtin_skill`) with `catfive` validation; converted `think` to an internal `Vec<BrainTurn>` loop using `ContextOptimizer` (`BlockStrategy::UpdateInPlace` for `LAW` and `MAP`); enabled `optimize_context` in `shell`; and added `laws::get_context_in_root` decoupling workspace skills from the shell intent classifier.
+- **2-Level Grouped `FilesMapIndex` & `[NEED_DIR]` Expansion** — Replaced flat full-repo file lists with a cached 2-level directory group index (`[id] prefix (N files)`) preserving `.gitignore` and `.env*` visibility, paginated `[NEED_DIR: id | page]` expansion, and surgical per-group refresh after `patchcraft` mutations.
+- **Core Cleanup** — Removed the unused `ragcraft` dependency and legacy `chunker` / `retrieval` modules.
+
 ## [v2.3.1] — November 2026
 
 - **Desktop App Store & Launcher Branding** — Standardized native desktop packaging for Ubuntu App Center, GNOME Software, and desktop launchers: the app now displays cleanly as **Uneven IDE** (previously defaulted to `UnevenUi`).

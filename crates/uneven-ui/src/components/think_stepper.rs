@@ -18,45 +18,50 @@ pub fn ThinkStepper() -> Element {
     };
 
     let step_text = match phase {
-        ThoughtPhase::ResolvingContext => "Analyzing context…",
-        ThoughtPhase::Drafting => "Drafting solution [1/4]…",
-        ThoughtPhase::RubberDuckingDraft => "🦆 Rubber-ducking: Unpacking assumptions…",
-        ThoughtPhase::Auditing => "Auditing architecture [2/4]…",
-        ThoughtPhase::VerifyingIntegrity => "Verifying integrity [3/4]…",
-        ThoughtPhase::RubberDuckingSimulation => "🦆 Rubber-ducking: Simulating execution…",
-        ThoughtPhase::Synthesizing => "Synthesizing proposal [4/4]…",
+        ThoughtPhase::ResolvingContext => "Context",
+        ThoughtPhase::Drafting => "Drafting",
+        ThoughtPhase::RubberDuckingDraft => "Reasoning",
+        ThoughtPhase::Auditing => "Auditing",
+        ThoughtPhase::VerifyingIntegrity => "Verifying",
+        ThoughtPhase::RubberDuckingSimulation => "Simulating",
+        ThoughtPhase::Synthesizing => "Synthesizing",
         ThoughtPhase::Completed => return rsx! {},
     };
 
-    let display_text = if let Some(ref sub) = current_state.active_subagent_info {
-        sub.clone()
-    } else {
-        step_text.to_string()
-    };
+    let subagent_label = current_state.active_subagent_info.clone();
 
     rsx! {
-        div { class: "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono font-medium bg-[#1a1a1a] border border-[#2e2e2e] text-neutral-200 shadow-sm transition-all animate-pulse shrink-0",
-            // Emerald spinner
-            svg {
-                class: "animate-spin w-3 h-3 text-emerald-400 shrink-0",
-                xmlns: "http://www.w3.org/2000/svg",
-                fill: "none",
-                view_box: "0 0 24 24",
-                circle {
-                    class: "opacity-25",
-                    cx: "12",
-                    cy: "12",
-                    r: "10",
-                    stroke: "currentColor",
-                    stroke_width: "4",
+        div { class: "self-start w-fit flex items-center gap-2",
+            div { class: "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono font-medium bg-[#1a1a1a] border border-[#2e2e2e] text-neutral-200 shadow-sm transition-all shrink-0",
+                // Emerald spinner
+                svg {
+                    class: "animate-spin w-3 h-3 text-emerald-400 shrink-0",
+                    xmlns: "http://www.w3.org/2000/svg",
+                    fill: "none",
+                    view_box: "0 0 24 24",
+                    circle {
+                        class: "opacity-25",
+                        cx: "12",
+                        cy: "12",
+                        r: "10",
+                        stroke: "currentColor",
+                        stroke_width: "4",
+                    }
+                    path {
+                        class: "opacity-75",
+                        fill: "currentColor",
+                        d: "M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z",
+                    }
                 }
-                path {
-                    class: "opacity-75",
-                    fill: "currentColor",
-                    d: "M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z",
+                span { class: "text-neutral-300 font-sans text-xs tracking-tight", "{step_text}" }
+            }
+
+            if let Some(sub) = subagent_label {
+                div { class: "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono bg-[#1a1a1a] border border-[#2e2e2e] text-neutral-300 shadow-sm shrink-0",
+                    span { class: "w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" }
+                    span { class: "font-sans text-xs tracking-tight", "{sub}" }
                 }
             }
-            span { class: "text-neutral-300 font-sans text-xs tracking-tight", "{display_text}" }
         }
     }
 }

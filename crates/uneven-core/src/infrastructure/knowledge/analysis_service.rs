@@ -79,6 +79,9 @@ impl AnalysisService {
         user_prompt: &str,
         infer_params: &InferParams,
     ) -> Result<GeneratedQuery, UnevenError> {
+        if !crate::application::LicenseService::check_pro() {
+            crate::application::LicenseService::check_and_increment_usage("analyze")?;
+        }
         let schema_text = self.format_schema(schema);
         let rules = build_prompt_rules(&self.security, &self.system_instructions);
         let sql_prompt = build_sql_gen_prompt(db_type, &schema_text, user_prompt, &rules);

@@ -17,32 +17,29 @@ pub fn StatusBar() -> Element {
     };
     let show_terminal = current_state.show_terminal;
     let is_terminal_running = current_state.terminal.is_running;
+    let plan_label = match current_state.license_tier.as_str() {
+        "team" => "TEAM",
+        "pro" => "PRO",
+        _ => "FREE",
+    };
+    let plan_badge_class = match current_state.license_tier.as_str() {
+        "team" => "px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-amber-950/60 border border-amber-700/50 text-amber-300",
+        "pro" => "px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-emerald-950/60 border border-emerald-700/50 text-emerald-300",
+        _ => "px-1.5 py-0.5 rounded text-[10px] font-mono bg-[#1a1a1a] border border-[#2a2a2a] text-neutral-400",
+    };
 
     let phase_str = match current_state.thought_phase {
-        Some(uneven_core::application::think_service::ThoughtPhase::ResolvingContext) => {
-            "Analyzing Context…"
-        }
-        Some(uneven_core::application::think_service::ThoughtPhase::Drafting) => {
-            "Drafting Solution [1/4]…"
-        }
-        Some(uneven_core::application::think_service::ThoughtPhase::RubberDuckingDraft) => {
-            "Rubber Duck (Draft)…"
-        }
-        Some(uneven_core::application::think_service::ThoughtPhase::Auditing) => {
-            "Auditing Architecture [2/4]…"
-        }
-        Some(uneven_core::application::think_service::ThoughtPhase::VerifyingIntegrity) => {
-            "Verifying Integrity [3/4]…"
-        }
-        Some(uneven_core::application::think_service::ThoughtPhase::RubberDuckingSimulation) => {
-            "Rubber Duck (Simulation)…"
-        }
-        Some(uneven_core::application::think_service::ThoughtPhase::Synthesizing) => {
-            "Synthesizing [4/4]…"
-        }
+        Some(uneven_core::application::think_service::ThoughtPhase::ResolvingContext) => "Context",
+        Some(uneven_core::application::think_service::ThoughtPhase::Drafting) => "Drafting",
+        Some(uneven_core::application::think_service::ThoughtPhase::RubberDuckingDraft) => "Reasoning",
+        Some(uneven_core::application::think_service::ThoughtPhase::Auditing) => "Auditing",
+        Some(uneven_core::application::think_service::ThoughtPhase::VerifyingIntegrity) => "Verifying",
+        Some(uneven_core::application::think_service::ThoughtPhase::RubberDuckingSimulation) => "Simulating",
+        Some(uneven_core::application::think_service::ThoughtPhase::Synthesizing) => "Synthesizing",
         Some(uneven_core::application::think_service::ThoughtPhase::Completed) => "Done",
         None => "Idle",
     };
+    let subagent_info = current_state.active_subagent_info.clone();
 
     rsx! {
         footer { class: "h-7 bg-neutral-900 border-t border-neutral-800 px-3 flex items-center justify-between text-[11px] text-neutral-400 font-mono select-none z-10",
@@ -57,12 +54,17 @@ pub fn StatusBar() -> Element {
                         }
                     }
                     span { class: "text-neutral-300 font-medium", "{phase_str}" }
+                    if let Some(sub) = subagent_info {
+                        span { class: "text-sky-400 font-medium", "· {sub}" }
+                    }
                 }
                 span { class: "text-neutral-700", "|" }
                 div { class: "flex items-center gap-1",
                     span { class: "text-neutral-500", "Brain:" }
                     span { class: "text-neutral-300", "{provider}" }
                 }
+                span { class: "text-neutral-700", "|" }
+                span { class: "{plan_badge_class}", "{plan_label}" }
                 span { class: "text-neutral-700", "|" }
                 button {
                     class: if show_terminal {

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use crate::domain::actions::{extract_action_response, ShellActionResponse};
 use crate::domain::config::PentesterMode;
-use crate::infrastructure::llm::history_manager::BrainTurn;
+use crate::infrastructure::llm::history_manager::{optimize_context, BrainTurn};
 use crate::infrastructure::llm::{infer_with_params, InferParams};
 use crate::infrastructure::security::laws;
 use crate::UnevenConfig;
@@ -284,7 +284,7 @@ pub fn classify_intent(raw: &str) -> ClassifiedIntent {
         intent.confidence = "high".to_string();
         return intent;
     }
-    if first == "scan" {
+    if first == "scan" || first == "/scan" {
         intent.action = ShellAction::Scan;
         intent.confidence = "high".to_string();
         let payload = tokens[1..].join(" ");
@@ -293,7 +293,7 @@ pub fn classify_intent(raw: &str) -> ClassifiedIntent {
         }
         return intent;
     }
-    if first == "pentest" {
+    if first == "pentest" || first == "/pentest" {
         intent.action = ShellAction::Pentest;
         intent.confidence = "high".to_string();
         let payload = tokens[1..].join(" ");
@@ -520,11 +520,6 @@ pub async fn classify_with_brain(
     }
 
     let mut prompt_lines = Vec::new();
-    if !files_map.is_empty() {
-        prompt_lines.push("PROJECT FILES MAP (Relative paths):".to_string());
-        prompt_lines.push(files_map.to_string());
-        prompt_lines.push("".to_string());
-    }
 
     // Inject external files map under [EXTERNAL_FILES_MAP] tag only when the query references the external project
     if let Some(ref ext_project_path) = config.knowledge.as_ref().and_then(|k| k.external_project.as_ref())
@@ -549,9 +544,18 @@ pub async fn classify_with_brain(
 
     // Add current input to prompt
     prompt_lines.push(input.to_string());
-    let final_prompt = prompt_lines.join("\n");
-    // Convert history to API format
-    let api_history: Vec<(String, String)> = history
+    let raw_prompt = prompt_lines.join("\n");
+
+    let mut hist = history.to_vec();
+    let map_opt = if files_map.is_empty() {
+        None
+    } else {
+        Some(files_map)
+    };
+    let final_prompt = optimize_context(&mut hist, &raw_prompt, &system_instructions, map_opt);
+
+    // Convert history to API format (after optimize_context may have updated LAW/MAP blocks)
+    let api_history: Vec<(String, String)> = hist
         .iter()
         .map(|turn| (turn.role.clone(), turn.content.clone()))
         .collect();

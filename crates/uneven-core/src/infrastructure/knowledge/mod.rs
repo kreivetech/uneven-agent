@@ -17,7 +17,6 @@ pub mod document_loader;
 pub mod web_loader;
 pub mod format_readers;
 pub mod scanner;
-pub mod chunker;
 pub mod dependency_graph;
 pub mod incremental_index;
 pub mod prompts;
@@ -33,7 +32,6 @@ pub use context_builder::{
 
 pub use document_loader::DocumentLoader;
 pub use web_loader::{WebScraper, WebDocument};
-pub use chunker::{Chunker, Chunk};
 pub use dependency_graph::DependencyGraph;
 pub use incremental_index::IncrementalIndex;
 pub use database_loader::DatabaseAnalyst;

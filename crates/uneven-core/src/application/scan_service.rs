@@ -273,12 +273,29 @@ impl ScanService {
     {
         let start_time = Instant::now();
 
+        if !crate::application::LicenseService::check_pro() {
+            crate::application::LicenseService::check_session_limit("scan", 2, 6 * 3600)?;
+        }
+
+        let resolved_target = {
+            let trimmed = target_dir.trim();
+            let p = Path::new(trimmed);
+            if trimmed.is_empty() || trimmed == "." {
+                root.to_path_buf()
+            } else if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                root.join(p)
+            }
+        };
+        let target_str = resolved_target.to_string_lossy().into_owned();
+
         if let Some(ref mut cb) = progress_callback {
             cb("Scanning source code for malicious patterns, secrets and vulnerabilities...");
         }
 
         // 1. Static analysis (includes Secrets, Malware, Obfuscation, Network, Vulnerabilities)
-        let static_findings = pentester::static_analysis(&[target_dir])
+        let static_findings = pentester::static_analysis(&[target_str.as_str()])
             .await
             .unwrap_or_default();
 
@@ -295,8 +312,12 @@ impl ScanService {
             cb("Auditing dependency CVEs...");
         }
 
-        // 3. Dependency vulnerability audit
-        let (vulnerabilities, audit_skipped, audit_error) = run_npm_audit(root);
+        // 3. Dependency vulnerability audit (offloaded from async/UI thread)
+        let root_for_audit = root.to_path_buf();
+        let (vulnerabilities, audit_skipped, audit_error) =
+            tokio::task::spawn_blocking(move || run_npm_audit(&root_for_audit))
+                .await
+                .unwrap_or_else(|e| (vec![], true, Some(e.to_string())));
 
         // 4. Combine findings
         let mut all_findings = static_findings;
@@ -311,8 +332,16 @@ impl ScanService {
         let _ = reviewer.review_findings(&mut all_findings).await;
 
         let duration_ms = start_time.elapsed().as_millis();
-        let files_scanned = count_scanned_files(target_dir);
-        let dependencies_scanned = count_dependencies_scanned(root);
+        let target_for_count = target_str.clone();
+        let root_for_count = root.to_path_buf();
+        let (files_scanned, dependencies_scanned) = tokio::task::spawn_blocking(move || {
+            (
+                count_scanned_files(&target_for_count),
+                count_dependencies_scanned(&root_for_count),
+            )
+        })
+        .await
+        .unwrap_or((0, 0));
         let risk_level = compute_risk_level(&all_findings);
         let summary = count_findings_by_severity(&all_findings);
         let grouped_findings = group_by_category(&all_findings);
@@ -378,9 +407,16 @@ pub fn run_npm_audit(root: &Path) -> (Vec<DepVulnerability>, bool, Option<String
 
 pub fn count_scanned_files(dir: &str) -> usize {
     let mut count = 0;
-    for entry in walkdir::WalkDir::new(dir).into_iter().flatten() {
-        if entry.file_type().is_file()
-            && let Some(ext) = entry.path().extension().and_then(|e| e.to_str())
+    let walker = ignore::WalkBuilder::new(dir)
+        .hidden(false)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        .build();
+    for entry in walker.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.is_file()
+            && let Some(ext) = path.extension().and_then(|e| e.to_str())
             && ["js", "jsx", "ts", "tsx", "py", "rs", "go", "java", "php", "rb"].contains(&ext)
         {
             count += 1;

@@ -1,5 +1,4 @@
 pub mod llm;
-pub mod retrieval;
 pub mod knowledge;
 pub mod watcher;
 pub mod pentester;

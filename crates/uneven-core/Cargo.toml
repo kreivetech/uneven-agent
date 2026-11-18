@@ -45,7 +45,6 @@ patchcraft = "0.1.0"
 llmcraft = "0.1.0"
 shieldcraft = "0.1.0"
 contextcraft = "0.1.0"
-ragcraft = "0.1.0"
 infercraft = "0.1.0"
 
 # LLM and embeddings

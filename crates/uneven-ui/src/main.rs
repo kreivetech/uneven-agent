@@ -73,12 +73,26 @@ fn main() {
 #[component]
 fn App() -> Element {
     // Provide global reactive AppState context to all components
-    use_context_provider(|| {
+    let mut app_state = use_context_provider(|| {
         let mut state = AppState::default();
         if let Some(path) = resolve_initial_project_path() {
             state.open_project(path);
         }
         Signal::new(state)
+    });
+
+    use_effect(move || {
+        spawn(async move {
+            let current = env!("CARGO_PKG_VERSION").to_string();
+            let res = tokio::spawn(async move {
+                uneven_core::application::UpdateService::check_ide_update(&current).await
+            })
+            .await;
+
+            if let Ok(Ok(Some(info))) = res {
+                app_state.write().available_ide_update = Some(info.latest_version);
+            }
+        });
     });
 
     rsx! {

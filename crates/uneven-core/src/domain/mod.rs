@@ -26,6 +26,8 @@ pub mod watcher;
 pub mod session;
 pub mod consts;
 pub mod actions;
+pub mod directives;
+pub mod files_map;
 pub mod pod;
 pub mod skills;
 pub mod markdown;
@@ -34,6 +36,8 @@ pub mod dashboard_spec;
 // Re-exports
 pub use skills::*;
 pub use actions::*;
+pub use directives::*;
+pub use files_map::*;
 pub use pod::*;
 pub use markdown::*;
 pub use dashboard_spec::*;

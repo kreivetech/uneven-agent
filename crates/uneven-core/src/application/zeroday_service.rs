@@ -121,6 +121,8 @@ impl ZerodayService {
     {
         let start_time = Instant::now();
 
+        crate::application::LicenseService::require_team()?;
+
         // 1. Resolve and validate target directories using Catfive
         let dir_validator = string().min(1).max(512).block("\0\r\n");
         let dirs: Vec<String> = if let Some(raw_dirs) = dir_override {

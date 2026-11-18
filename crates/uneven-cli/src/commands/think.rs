@@ -1,7 +1,6 @@
 use super::patch_engine;
 use super::resource_guardian::ResourceGuardian;
 use anyhow::Result;
-use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::io::{IsTerminal, Write};
 use uneven_core::application::think_service::{
@@ -58,51 +57,13 @@ pub async fn run(
 
     let spinner_clone = spinner.clone();
     let on_phase = move |phase: ThoughtPhase| match phase {
-        ThoughtPhase::ResolvingContext => {
-            spinner_clone.set_message("Analyzing context…");
-        }
-        ThoughtPhase::Drafting => {
-            spinner_clone.set_message(format!(
-                "{} {}",
-                style("[1/4]").bold().cyan(),
-                style("Drafting solution…").dim()
-            ));
-        }
-        ThoughtPhase::RubberDuckingDraft => {
-            spinner_clone.set_message(format!(
-                "{} {}",
-                style("[🦆]").bold().cyan(),
-                style("Rubber-ducking draft (unpacking assumptions)…").dim()
-            ));
-        }
-        ThoughtPhase::Auditing => {
-            spinner_clone.set_message(format!(
-                "{} {}",
-                style("[2/4]").bold().yellow(),
-                style("Auditing architecture & security…").dim()
-            ));
-        }
-        ThoughtPhase::VerifyingIntegrity => {
-            spinner_clone.set_message(format!(
-                "{} {}",
-                style("[3/4]").bold().magenta(),
-                style("Verifying code integrity…").dim()
-            ));
-        }
-        ThoughtPhase::RubberDuckingSimulation => {
-            spinner_clone.set_message(format!(
-                "{} {}",
-                style("[🦆]").bold().magenta(),
-                style("Rubber-ducking simulation (pre-flight dry-run)…").dim()
-            ));
-        }
-        ThoughtPhase::Synthesizing => {
-            spinner_clone.set_message(format!(
-                "{} {}",
-                style("[4/4]").bold().green(),
-                style("Synthesizing proposal…").dim()
-            ));
-        }
+        ThoughtPhase::ResolvingContext => spinner_clone.set_message("Context"),
+        ThoughtPhase::Drafting => spinner_clone.set_message("Drafting"),
+        ThoughtPhase::RubberDuckingDraft => spinner_clone.set_message("Reasoning"),
+        ThoughtPhase::Auditing => spinner_clone.set_message("Auditing"),
+        ThoughtPhase::VerifyingIntegrity => spinner_clone.set_message("Verifying"),
+        ThoughtPhase::RubberDuckingSimulation => spinner_clone.set_message("Simulating"),
+        ThoughtPhase::Synthesizing => spinner_clone.set_message("Synthesizing"),
         ThoughtPhase::Completed => {}
     };
 

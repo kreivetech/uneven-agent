@@ -15,7 +15,7 @@ pub const LAW_END: &str = DEFAULT_LAW_END;
 pub const MAP_START: &str = DEFAULT_MAP_START;
 pub const MAP_END: &str = DEFAULT_MAP_END;
 
-use crate::infrastructure::knowledge::scanner::ProjectScanner;
+use crate::domain::files_map::FilesMapIndex;
 use crate::infrastructure::patch::FileObject;
 use crate::UnevenConfig;
 use std::path::Path;
@@ -38,27 +38,45 @@ impl HistoryItem for BrainTurn {
     }
 }
 
-pub fn get_project_files_map(config: &UnevenConfig, root: &Path) -> String {
-    let dirs = config
-        .knowledge
-        .as_ref()
-        .and_then(|k| k.dirs.clone())
-        .unwrap_or_else(|| vec![".".to_string()]);
-    let scanner = ProjectScanner::new(root);
-    let mut files = scanner.scan(dirs).unwrap_or_default();
+/// Loads the cached `FilesMapIndex` from `.uneven/cache/files-map-groups.json` or builds and caches it.
+pub fn load_or_build_files_map(root: &Path) -> FilesMapIndex {
+    let cache_dir = crate::infrastructure::utils::paths::project_cache_dir(root);
+    let cache_file = cache_dir.join("files-map-groups.json");
 
-    if let Some(extra_files) = config.knowledge.as_ref().and_then(|k| k.files.clone()) {
-        for f in extra_files {
-            let normalized_f = f.replace('\\', "/");
-            let abs_path = root.join(&normalized_f);
-            if abs_path.exists() && abs_path.is_file() {
-                files.push(normalized_f);
-            }
-        }
-        files.sort();
-        files.dedup();
+    if cache_file.is_file()
+        && let Ok(raw) = std::fs::read_to_string(&cache_file)
+        && let Ok(idx) = serde_json::from_str::<FilesMapIndex>(&raw)
+        && idx.root == root
+    {
+        return idx;
     }
-    files.join("\n")
+
+    let idx = FilesMapIndex::build(root, None);
+    let _ = std::fs::create_dir_all(&cache_dir);
+    if let Ok(json) = serde_json::to_string(&idx) {
+        let _ = std::fs::write(&cache_file, json);
+    }
+    idx
+}
+
+/// Surgically refreshes only the 2-level directory groups affected by `rel_paths`.
+pub fn refresh_files_map_paths(root: &Path, rel_paths: &[String]) {
+    if rel_paths.is_empty() {
+        return;
+    }
+    let mut idx = load_or_build_files_map(root);
+    for rel in rel_paths {
+        idx.refresh_path(rel);
+    }
+    let cache_dir = crate::infrastructure::utils::paths::project_cache_dir(root);
+    let _ = std::fs::create_dir_all(&cache_dir);
+    if let Ok(json) = serde_json::to_string(&idx) {
+        let _ = std::fs::write(cache_dir.join("files-map-groups.json"), json);
+    }
+}
+
+pub fn get_project_files_map(_config: &UnevenConfig, root: &Path) -> String {
+    load_or_build_files_map(root).render_compact_index()
 }
 
 pub fn save_history_to_disk(

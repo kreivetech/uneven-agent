@@ -1,6 +1,6 @@
 # Uneven IDE Cockpit (`uneven-ui`)
 
-![Version](https://img.shields.io/badge/version-0.2.0-cyan)
+![Version](https://img.shields.io/badge/version-0.2.3-cyan)
 ![Platform](https://img.shields.io/badge/platform-desktop%20(Linux%20%7C%20macOS%20%7C%20Windows)-blue)
 ![Framework](https://img.shields.io/badge/framework-Dioxus%200.7-orange)
 ![License](https://img.shields.io/badge/license-BSL%201.1-green)
@@ -24,7 +24,7 @@ crates/uneven-ui/
 │   ├── state/      # Global reactive AppState and active sessions
 │   ├── utils/      # Native window management, file dialogs (rfd), .env persistence
 │   └── main.rs     # Desktop launcher with CLI project path resolution & zero FOUC
-├── Cargo.toml      # Package manifest (v0.2.0) with desktop bundle metadata
+├── Cargo.toml      # Package manifest (v0.2.3) with desktop bundle metadata
 └── Dioxus.toml     # Desktop bundle metadata and application icon mapping
 ```
 
@@ -48,7 +48,8 @@ crates/uneven-ui/
 - **Smart Session Management**: Dynamically derived chat titles reflecting the topic of discussion instead of static placeholders.
 - **Context Attachment & Native File Picker**: Attach files or folders directly into agent context via native OS dialogs (`rfd`) or the interactive workspace file tree.
 - **Safe Token Guard**: 2,000-character prompt safety monitor with dynamic counter to prevent context overflow and encourage concise directives.
-- **Autonomous Action Pods**: Real-time display of active AI clusters, multi-agent supervisory logs, and step-by-step reasoning steps.
+- **Autonomous Action Pods & Minimalist HUD**: Real-time display of active AI clusters, compact left-aligned 1-word `ThinkStepper` & `StatusBar` phase pills, and a separate inline subagent indicator (`Prime`, `Worker X/Y`, `Review X`).
+- **Non-Blocking Security Workflows**: `/scan`, `/pentest`, and `/zeroday` execute off the Dioxus UI thread against the opened `project_root`, keeping the cockpit responsive during heavy audits.
 
 ### 4. 📂 Multi-Tab In-Place Code Editor
 - **Selective Actions**: Seamlessly choose between viewing a file in the editor or attaching it to the prompt context.

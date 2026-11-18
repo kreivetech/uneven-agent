@@ -7,11 +7,11 @@ use crate::utils::icon_logo_data_uri;
 use catfive::{string, Validator};
 use dioxus::prelude::*;
 use std::collections::HashMap;
-use uneven_core::application::TokenQuotaService;
+use uneven_core::application::{LicenseService, TokenQuotaService};
 
 #[component]
 pub fn SettingsPage() -> Element {
-    let state = use_context::<Signal<AppState>>();
+    let mut state = use_context::<Signal<AppState>>();
     let current_state = state.read();
     let root = current_state
         .project_root
@@ -27,6 +27,10 @@ pub fn SettingsPage() -> Element {
     let mut expanded_provider = use_signal(|| None::<String>);
     let mut expanded_db = use_signal(|| None::<String>);
     let mut save_status = use_signal(|| None::<String>);
+    let mut license_key_input = use_signal(String::new);
+    let mut license_busy = use_signal(|| false);
+    let mut license_feedback = use_signal(|| None::<String>);
+    let active_tier = current_state.license_tier.clone();
 
     rsx! {
         div { class: "flex-1 flex flex-col bg-[#0a0a0a] p-6 overflow-y-auto select-none space-y-6 max-w-5xl mx-auto w-full",
@@ -484,6 +488,105 @@ pub fn SettingsPage() -> Element {
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+
+                // ── License & Plan Section ───────────────────────────────────
+                section { class: "flex flex-col gap-3",
+                    div { class: "flex items-center justify-between",
+                        h2 { class: "text-xs font-semibold uppercase tracking-wider text-neutral-400",
+                            "License & Plan"
+                        }
+                        span { class: "px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-[#1a1a1a] border border-[#2a2a2a] text-neutral-200 uppercase",
+                            "{active_tier}"
+                        }
+                    }
+                    div { class: "bg-[#121212] border border-[#222222] rounded-xl p-4 flex flex-col gap-3",
+                        if let Some(msg) = license_feedback.read().as_ref() {
+                            div { class: "text-xs font-mono text-neutral-300 bg-[#181818] border border-[#2a2a2a] rounded-lg px-3 py-2",
+                                "{msg}"
+                            }
+                        }
+                        div { class: "flex items-center gap-2",
+                            input {
+                                class: "flex-1 bg-[#141414] border border-[#262626] rounded-lg px-3 py-2 text-xs text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-cyan-500 font-mono transition-colors",
+                                r#type: "password",
+                                placeholder: "UNVN-...",
+                                value: "{license_key_input}",
+                                oninput: move |evt| license_key_input.set(evt.value()),
+                            }
+                            button {
+                                class: "px-3.5 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#262626] text-neutral-100 border border-[#2e2e2e] text-xs font-medium cursor-pointer transition-colors disabled:opacity-50",
+                                disabled: *license_busy.read(),
+                                onclick: move |_| {
+                                    let key = license_key_input.read().trim().to_string();
+                                    if key.is_empty() {
+                                        license_feedback.set(Some("[UE-02000001] Enter a license key first.".to_string()));
+                                        return;
+                                    }
+                                    license_busy.set(true);
+                                    license_feedback.set(None);
+                                    spawn(async move {
+                                        let res = tokio::spawn(async move { LicenseService::activate(&key).await })
+                                            .await
+                                            .unwrap_or_else(|_| {
+                                                Err(uneven_core::UnevenError::ConfigError(
+                                                    "[UE-01999999] License activation failed.".to_string(),
+                                                ))
+                                            });
+                                        match res {
+                                            Ok(cache) => {
+                                                state.write().license_tier = cache.tier.clone();
+                                                license_key_input.set(String::new());
+                                                license_feedback.set(Some(format!(
+                                                    "License active: {} ({} seat(s)).",
+                                                    cache.tier.to_uppercase(),
+                                                    cache.seats
+                                                )));
+                                            }
+                                            Err(e) => {
+                                                license_feedback.set(Some(e.to_string()));
+                                            }
+                                        }
+                                        license_busy.set(false);
+                                    });
+                                },
+                                "Activate"
+                            }
+                            if active_tier != "free" {
+                                button {
+                                    class: "px-3 py-2 rounded-lg bg-rose-950/30 hover:bg-rose-950/60 text-rose-400 border border-rose-800/40 text-xs font-mono cursor-pointer transition-colors disabled:opacity-50",
+                                    disabled: *license_busy.read(),
+                                    onclick: move |_| {
+                                        license_busy.set(true);
+                                        license_feedback.set(None);
+                                        spawn(async move {
+                                            let res = tokio::spawn(async move { LicenseService::deactivate().await })
+                                                .await
+                                                .unwrap_or_else(|_| {
+                                                    Err(uneven_core::UnevenError::ConfigError(
+                                                        "[UE-01999999] License deactivation failed.".to_string(),
+                                                    ))
+                                                });
+                                            match res {
+                                                Ok(_) => {
+                                                    state.write().license_tier = "free".to_string();
+                                                    license_feedback.set(Some("License deactivated. Running on FREE tier.".to_string()));
+                                                }
+                                                Err(e) => {
+                                                    license_feedback.set(Some(e.to_string()));
+                                                }
+                                            }
+                                            license_busy.set(false);
+                                        });
+                                    },
+                                    "Deactivate"
+                                }
+                            }
+                        }
+                        div { class: "text-[10px] text-neutral-500 font-mono",
+                            "Persisted locally in ~/.config/uneven-ai/license.json (shared with CLI)."
                         }
                     }
                 }

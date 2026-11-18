@@ -1,15 +1,11 @@
 use anyhow::Result;
 use console::style;
 use indicatif::ProgressBar;
-use crate::commands::license;
 use uneven_core::application::{ZerodayResult, ZerodayService};
 use uneven_core::infrastructure::config::loader;
 use uneven_core::infrastructure::pentester::Severity;
 
 pub async fn run(dir: Option<String>, report: Option<String>, deep: bool) -> Result<()> {
-    // 1. License Check (Requires Team Plan)
-    license::require_team()?;
-
     let root = loader::find_project_root(None);
     let config = loader::load_config(&root)?;
 

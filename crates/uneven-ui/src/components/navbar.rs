@@ -49,8 +49,53 @@ pub fn Navbar() -> Element {
             }
 
 
-            // Right: Config link & Pods toggle
+            // Right: Update button (when available), Config link & Terminal/Pods toggles
             div { class: "flex items-center gap-2 text-xs font-sans",
+                if current_state.available_ide_update.is_some() {
+                    {
+                        let is_updating = current_state.is_updating_ide;
+                        rsx! {
+                            button {
+                                class: "px-2.5 py-1 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-700/50 text-emerald-300 font-medium cursor-pointer transition-colors disabled:opacity-50",
+                                disabled: is_updating,
+                                onclick: move |_| {
+                                    state.write().is_updating_ide = true;
+                                    spawn(async move {
+                                        let res = tokio::spawn(async move {
+                                            uneven_core::application::UpdateService::apply_ide_update().await
+                                        })
+                                        .await
+                                        .unwrap_or_else(|_| {
+                                            Err(uneven_core::UnevenError::ConfigError(
+                                                "[UE-01999999] Update task failed.".to_string(),
+                                            ))
+                                        });
+
+                                        match res {
+                                            Ok(msg) => {
+                                                state.write().available_ide_update = None;
+                                                state.write().push_message(
+                                                    crate::state::MessageRole::Assistant,
+                                                    msg,
+                                                    Vec::new(),
+                                                );
+                                            }
+                                            Err(e) => {
+                                                state.write().push_message(
+                                                    crate::state::MessageRole::Assistant,
+                                                    e.to_string(),
+                                                    Vec::new(),
+                                                );
+                                            }
+                                        }
+                                        state.write().is_updating_ide = false;
+                                    });
+                                },
+                                if is_updating { "update now" } else { "update available" }
+                            }
+                        }
+                    }
+                }
                 {
                     let route = use_route::<Route>();
                     let is_settings = route == Route::SettingsPage {};
