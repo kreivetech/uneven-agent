@@ -38,7 +38,21 @@ parts:
       - libgtk-3-dev
       - libayatana-appindicator3-dev
       - librsvg2-dev
+      - libxdo-dev
+      - lld
+      - patchelf
+    stage-packages:
+      - libwebkit2gtk-4.1-0
+      - libgtk-3-0
+      - libayatana-appindicator3-1
+      - librsvg2-2
+      - libxdo3
+      - libssl3
     override-build: |
       cargo build --release -p uneven-ui
       install -d $CRAFT_PART_INSTALL/bin
       install -m 755 target/release/uneven-ui $CRAFT_PART_INSTALL/bin/uneven-ui
+      patchelf \
+        --set-interpreter /snap/core26/current/lib64/ld-linux-x86-64.so.2 \
+        --set-rpath '$ORIGIN/../lib:$ORIGIN/../usr/lib:$ORIGIN/../usr/lib/x86_64-linux-gnu:/snap/core26/current/lib/x86_64-linux-gnu:/snap/core26/current/usr/lib/x86_64-linux-gnu' \
+        $CRAFT_PART_INSTALL/bin/uneven-ui
