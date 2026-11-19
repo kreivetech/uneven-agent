@@ -1,0 +1,44 @@
+name: uneven-ide
+title: Uneven IDE
+base: core26
+version: "0.2.3"
+license: proprietary
+website: https://uneven.dev
+contact: mailto:contact@kreive.com.br
+donation: https://github.com/sponsors/kreivetech
+icon: crates/uneven-ui/icons/256x256.png
+summary: IDE with preemptive security audits, surgical diffs, and safe analytics
+description: |
+  Uneven IDE is a high-velocity development environment engineered for building
+  scalable and secure software with verified safety boundaries.
+
+  Core capabilities:
+  • Pre-Production Security Guardian: Detects OWASP vulnerabilities, exposed secrets, and dependency risks before code reaches production.
+  • Surgical Diff Approval Engine: Side-by-side visual diff inspection with atomic patch application, ensuring full developer review before disk writes.
+  • Non-Destructive Data Analysis: Query databases and inspect schemas under strict read-only constraints that mathematically prevent data deletion.
+  • Modular Architectural Pods: Dedicated workstreams that isolate and synchronize application layers across frontend, backend, and schema.
+  • Direct Multi-Provider Integration: Connect Claude, Gemini, or OpenAI using your own API keys with complete telemetry and quota visibility.
+
+grade: stable
+confinement: classic
+
+apps:
+  uneven-ide:
+    command: bin/uneven-ui
+    desktop: usr/share/applications/uneven-ui.desktop
+
+parts:
+  uneven-ui:
+    plugin: rust
+    source: .
+    build-packages:
+      - libssl-dev
+      - pkg-config
+      - libwebkit2gtk-4.1-dev
+      - libgtk-3-dev
+      - libayatana-appindicator3-dev
+      - librsvg2-dev
+    override-build: |
+      cargo build --release -p uneven-ui
+      install -d $CRAFT_PART_INSTALL/bin
+      install -m 755 target/release/uneven-ui $CRAFT_PART_INSTALL/bin/uneven-ui
