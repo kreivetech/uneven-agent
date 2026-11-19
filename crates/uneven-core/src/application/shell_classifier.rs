@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use crate::domain::actions::{extract_action_response, ShellActionResponse};
 use crate::domain::config::PentesterMode;
-use crate::infrastructure::llm::history_manager::{optimize_context, BrainTurn};
+use crate::infrastructure::llm::history_manager::{prepare_structured_prompt, BrainTurn};
 use crate::infrastructure::llm::{infer_with_params, InferParams};
 use crate::infrastructure::security::laws;
 use crate::UnevenConfig;
@@ -546,19 +546,12 @@ pub async fn classify_with_brain(
     prompt_lines.push(input.to_string());
     let raw_prompt = prompt_lines.join("\n");
 
-    let mut hist = history.to_vec();
     let map_opt = if files_map.is_empty() {
         None
     } else {
         Some(files_map)
     };
-    let final_prompt = optimize_context(&mut hist, &raw_prompt, &system_instructions, map_opt);
-
-    // Convert history to API format (after optimize_context may have updated LAW/MAP blocks)
-    let api_history: Vec<(String, String)> = hist
-        .iter()
-        .map(|turn| (turn.role.clone(), turn.content.clone()))
-        .collect();
+    let prepared = prepare_structured_prompt(history, &raw_prompt, &system_instructions, map_opt);
 
     let threads = config.brain.local.as_ref().and_then(|l| l.threads).unwrap_or(4);
     let max_context = if config.brain.provider == "local" {
@@ -575,16 +568,16 @@ pub async fn classify_with_brain(
         max_context,
         grammar: None,
         provider: Some(config.brain.provider.clone()),
-        system: Some(system_instructions),
-        history: if api_history.is_empty() {
+        system: prepared.system.or(Some(system_instructions)),
+        history: if prepared.history.is_empty() {
             None
         } else {
-            Some(api_history)
+            Some(prepared.history)
         },
     };
 
     // Call LLM API
-    let res = infer_with_params(&final_prompt, &params).await.ok()?;
+    let res = infer_with_params(&prepared.prompt, &params).await.ok()?;
     let parsed = extract_action_response(&res.content)?;
     let intent = json_to_intent(&parsed);
     Some((intent, parsed.message, res.tokens_used))

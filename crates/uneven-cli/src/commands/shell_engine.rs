@@ -7,7 +7,7 @@ use uneven_core::UnevenConfig;
 use uneven_core::infrastructure::config::loader;
 use uneven_core::infrastructure::security::laws;
 use uneven_core::infrastructure::llm::{InferParams, init as init_llm, infer_with_params};
-use uneven_core::infrastructure::llm::history_manager::optimize_context;
+use uneven_core::infrastructure::llm::history_manager::prepare_structured_prompt;
 
 pub fn handle_slash_command(trimmed: &str, config: &UnevenConfig, root: &std::path::Path) -> Result<String> {
     let mut updated_config = config.clone();
@@ -262,37 +262,30 @@ pub async fn handle_chat_message(
             system_instructions.clone()
         };
 
-        // If not local, optimize context using history
-        let mut iter_history = base_history.clone();
-        if brain.provider != "local" {
-            // Pre-push user's turn with context to iter_history
-            iter_history.push(("user".to_string(), prompt_with_context.clone()));
-
+        // If not local, prepare structured context (laws + files_map in system, clean history)
+        let iter_history = base_history.clone();
+        let api_history = if brain.provider != "local" {
             let files_map = super::interactive::get_project_files_map(config, &root);
-            prompt_to_use = optimize_context(
-                &mut iter_history,
+            let prepared = prepare_structured_prompt(
+                &iter_history,
                 &prompt_with_context,
                 &system_instructions_to_use,
                 Some(&files_map),
             );
-
-            // Update the last turn in history to the optimized prompt
-            if let Some(last_turn) = iter_history.last_mut()
-                && last_turn.0 == "user" {
-                    last_turn.1 = prompt_to_use.clone();
-                }
-
-            system_instructions_to_use = String::new();
-        }
+            prompt_to_use = prepared.prompt;
+            system_instructions_to_use = prepared.system.unwrap_or(system_instructions_to_use);
+            if prepared.history.is_empty() {
+                None
+            } else {
+                Some(prepared.history)
+            }
+        } else {
+            None
+        };
 
         let chat_template = uneven_core::infrastructure::llm::inference::chat_template::detect_template(&brain.model);
         let final_prompt = if brain.provider == "local" {
-            let past_turns = if iter_history.len() > 1 {
-                &iter_history[..iter_history.len() - 1]
-            } else {
-                &[]
-            };
-            let local_chat_history = past_turns.iter().map(|turn| {
+            let local_chat_history = iter_history.iter().map(|turn| {
                 uneven_core::infrastructure::llm::inference::chat_template::ChatTurn {
                     role: turn.0.clone(),
                     content: turn.1.clone(),
@@ -312,17 +305,6 @@ pub async fn handle_chat_message(
             None
         } else {
             Some(system_instructions_to_use)
-        };
-
-        // Exclude the current user turn from `history` parameter since it's passed as `prompt`
-        let api_history = if brain.provider != "local" {
-            if iter_history.len() > 1 {
-                Some(iter_history[..iter_history.len() - 1].to_vec())
-            } else {
-                None
-            }
-        } else {
-            None
         };
 
         let params = InferParams {

@@ -113,13 +113,15 @@ pub async fn run(provider_opt: Option<String>, model_opt: Option<String>) -> Res
 
         if brain.provider != "local" {
             let files_map = crate::commands::interactive::get_project_files_map(&config, &root);
-            prompt_to_use = uneven_core::infrastructure::llm::history_manager::optimize_context(
-                &mut history,
+            let prepared = uneven_core::infrastructure::llm::history_manager::prepare_structured_prompt(
+                &history,
                 question,
                 &system_instructions,
                 Some(&files_map),
             );
-            system_instructions_to_use = String::new();
+            prompt_to_use = prepared.prompt;
+            system_instructions_to_use = prepared.system.unwrap_or(system_instructions);
+            history = prepared.history;
         }
 
         let chat_template = detect_template(&brain.model);

@@ -5,15 +5,64 @@
 
 pub use contextcraft::{
     delete_session, extract_content_between, list_sessions, load_session, optimize_context,
-    save_session, update_content_between, BlockStrategy, ChatTurn, ContextBlock, ContextError,
-    ContextOptimizer, HistoryItem, DEFAULT_LAW_END, DEFAULT_LAW_START, DEFAULT_MAP_END,
-    DEFAULT_MAP_START,
+    optimize_structured_context, save_session, update_content_between, BlockStrategy, ChatTurn,
+    ContextBlock, ContextError, ContextOptimizer, HistoryItem, OptimizedContext, DEFAULT_LAW_END,
+    DEFAULT_LAW_START, DEFAULT_MAP_END, DEFAULT_MAP_START,
 };
 
 pub const LAW_START: &str = DEFAULT_LAW_START;
 pub const LAW_END: &str = DEFAULT_LAW_END;
 pub const MAP_START: &str = DEFAULT_MAP_START;
 pub const MAP_END: &str = DEFAULT_MAP_END;
+
+/// Structured prompt payload ready for LLM inference without delimiter tags in history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedPromptContext {
+    pub system: Option<String>,
+    pub history: Vec<(String, String)>,
+    pub prompt: String,
+}
+
+/// Optimizes context via `contextcraft::optimize_structured_context`, combining `laws` and
+/// optional `files_map` into `system` while keeping `history` clean of tags and the current turn.
+pub fn prepare_structured_prompt<T>(
+    history: &[T],
+    prompt: &str,
+    laws: &str,
+    files_map: Option<&str>,
+) -> PreparedPromptContext
+where
+    T: HistoryItem + Clone + From<(String, String)>,
+{
+    let mut ctx = optimize_structured_context(history.to_vec(), prompt, laws, files_map);
+    let current_prompt = if !prompt.trim().is_empty() {
+        ctx.history
+            .pop()
+            .map(|turn| turn.get_content().to_string())
+            .unwrap_or_else(|| prompt.to_string())
+    } else {
+        String::new()
+    };
+
+    let system = match (ctx.laws, ctx.files_map) {
+        (Some(l), Some(m)) => Some(format!("{}\n\n{}", l, m)),
+        (Some(l), None) => Some(l),
+        (None, Some(m)) => Some(m),
+        (None, None) => None,
+    };
+
+    let clean_history = ctx
+        .history
+        .into_iter()
+        .map(|turn| (turn.get_role().to_string(), turn.get_content().to_string()))
+        .collect();
+
+    PreparedPromptContext {
+        system,
+        history: clean_history,
+        prompt: current_prompt,
+    }
+}
 
 use crate::domain::files_map::FilesMapIndex;
 use crate::infrastructure::patch::FileObject;
@@ -24,6 +73,12 @@ use std::path::Path;
 pub struct BrainTurn {
     pub role: String,
     pub content: String,
+}
+
+impl From<(String, String)> for BrainTurn {
+    fn from((role, content): (String, String)) -> Self {
+        Self { role, content }
+    }
 }
 
 impl HistoryItem for BrainTurn {
@@ -146,4 +201,45 @@ pub fn clear_pending_patch_from_disk(session_id: &str, root: &Path) -> std::io::
         std::fs::remove_file(patch_file)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_prepare_structured_prompt_separates_system_and_keeps_history_clean() {
+        let history = vec![
+            BrainTurn {
+                role: "user".to_string(),
+                content: "First question".to_string(),
+            },
+            BrainTurn {
+                role: "assistant".to_string(),
+                content: "First answer".to_string(),
+            },
+        ];
+
+        let prepared = prepare_structured_prompt(
+            &history,
+            "Follow-up question",
+            "System laws",
+            Some("src/lib.rs\nsrc/main.rs"),
+        );
+
+        assert_eq!(
+            prepared.system.as_deref(),
+            Some("System laws\n\nsrc/lib.rs\nsrc/main.rs")
+        );
+        assert_eq!(prepared.prompt, "Follow-up question");
+        assert_eq!(prepared.history.len(), 2);
+        assert_eq!(
+            prepared.history[0],
+            ("user".to_string(), "First question".to_string())
+        );
+        assert_eq!(
+            prepared.history[1],
+            ("assistant".to_string(), "First answer".to_string())
+        );
+    }
 }

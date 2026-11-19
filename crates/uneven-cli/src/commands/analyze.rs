@@ -477,16 +477,20 @@ pub async fn run(
 
         let sql_prompt = if brain.provider != "local" {
             let base_prompt = build_sql_gen_prompt(db_type, "", &effective_request, "");
-            let optimized_prompt =
-                uneven_core::infrastructure::llm::history_manager::optimize_context(
-                    &mut history,
+            let prepared =
+                uneven_core::infrastructure::llm::history_manager::prepare_structured_prompt(
+                    &history,
                     &base_prompt,
                     &prompt_rules,
                     Some(&schema_text),
                 );
-            loop_params.system = None;
-            loop_params.history = Some(history.clone());
-            optimized_prompt
+            loop_params.system = prepared.system;
+            loop_params.history = if prepared.history.is_empty() {
+                None
+            } else {
+                Some(prepared.history)
+            };
+            prepared.prompt
         } else {
             build_sql_gen_prompt(db_type, &schema_text, &effective_request, &prompt_rules)
         };

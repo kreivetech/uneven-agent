@@ -1,7 +1,7 @@
 use super::context_assembler::ContextAssembler;
 use super::think_service::run_single_turn;
 use crate::infrastructure::llm::history_manager::{
-    get_project_files_map, optimize_context, BrainTurn,
+    get_project_files_map, prepare_structured_prompt, BrainTurn,
 };
 use crate::infrastructure::llm::init as init_llm;
 use crate::infrastructure::security::laws;
@@ -110,17 +110,21 @@ pub async fn execute_ask_with_system(
         context, question
     );
 
-    // 5. Optimize Context (Auto-compact history if needed and eliminate redundant laws/maps)
-    let prompt = if let Some(ref mut hist) = history {
+    // 5. Optimize Context (Auto-compact history if needed and combine laws + files_map into system)
+    let (prompt, effective_system) = if let Some(ref mut hist) = history {
         crate::application::ContextCompactorService::auto_compact(hist);
         let files_map = get_project_files_map(config, root);
-        optimize_context(hist, &raw_prompt, &system_instructions, Some(&files_map))
+        let prepared = prepare_structured_prompt(hist, &raw_prompt, &system_instructions, Some(&files_map));
+        (
+            prepared.prompt,
+            prepared.system.unwrap_or_else(|| system_instructions.clone()),
+        )
     } else {
-        raw_prompt
+        (raw_prompt, system_instructions.clone())
     };
 
     // 6. Execute inference turn
-    let raw_response = run_single_turn(&prompt, &system_instructions, &brain, threads, max_context).await?;
+    let raw_response = run_single_turn(&prompt, &effective_system, &brain, threads, max_context).await?;
 
     // 7. Sanitize response with Security Guard
     let sanitized_response = safety.sanitize_response(&raw_response);

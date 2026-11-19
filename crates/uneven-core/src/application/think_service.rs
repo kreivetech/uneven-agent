@@ -6,8 +6,7 @@ use crate::domain::directives::{
 };
 use crate::domain::files_map::FilesMapIndex;
 use crate::infrastructure::llm::history_manager::{
-    load_or_build_files_map, BlockStrategy, BrainTurn, ContextOptimizer, LAW_END, LAW_START,
-    MAP_END, MAP_START,
+    load_or_build_files_map, prepare_structured_prompt, BrainTurn,
 };
 use crate::infrastructure::llm::inference::chat_template::{apply_template, detect_template};
 use crate::infrastructure::llm::{
@@ -218,8 +217,8 @@ fn absorb_stage_directives(
     }
 }
 
-/// Executes a stage of the `think` loop using `contextcraft::optimize_context` over an internal
-/// `Vec<BrainTurn>` so the stage law replaces any prior rule in-place without duplicating context.
+/// Executes a stage of the `think` loop using `prepare_structured_prompt` so `laws` and
+/// `files_map` are delivered via `system` while keeping `think_history` clean of delimiter tags.
 async fn run_think_turn(
     think_history: &mut Vec<BrainTurn>,
     raw_prompt: &str,
@@ -230,31 +229,25 @@ async fn run_think_turn(
     max_context: usize,
 ) -> Result<String> {
     let effective_law = with_directives_protocol(stage_law);
-    let mut optimizer = ContextOptimizer::new()
-        .with_custom_tags(LAW_START, LAW_END, &effective_law, BlockStrategy::UpdateInPlace);
-    if let Some(map) = context_map.filter(|m| !m.trim().is_empty()) {
-        optimizer = optimizer.with_custom_tags(MAP_START, MAP_END, map, BlockStrategy::UpdateInPlace);
-    }
-    let optimized_prompt = optimizer.optimize(think_history, raw_prompt);
-
-    let api_history: Vec<(String, String)> = think_history
-        .iter()
-        .map(|turn| (turn.role.clone(), turn.content.clone()))
-        .collect();
+    let prepared = prepare_structured_prompt(think_history, raw_prompt, &effective_law, context_map);
+    let system_text = prepared.system.unwrap_or(effective_law);
 
     let chat_template = detect_template(&brain.model);
     let prompt_to_use = if brain.provider == "local" {
         let local_turns: Vec<crate::infrastructure::llm::inference::chat_template::ChatTurn> =
-            think_history
+            prepared
+                .history
                 .iter()
-                .map(|t| crate::infrastructure::llm::inference::chat_template::ChatTurn {
-                    role: t.role.clone(),
-                    content: t.content.clone(),
+                .map(|(role, content)| {
+                    crate::infrastructure::llm::inference::chat_template::ChatTurn {
+                        role: role.clone(),
+                        content: content.clone(),
+                    }
                 })
                 .collect();
-        apply_template(&chat_template, &effective_law, &local_turns, &optimized_prompt)
+        apply_template(&chat_template, &system_text, &local_turns, &prepared.prompt)
     } else {
-        optimized_prompt.clone()
+        prepared.prompt
     };
 
     let params = InferParams {
@@ -266,11 +259,11 @@ async fn run_think_turn(
         max_context,
         grammar: None,
         provider: Some(brain.provider.clone()),
-        system: Some(effective_law),
-        history: if api_history.is_empty() {
+        system: Some(system_text),
+        history: if prepared.history.is_empty() {
             None
         } else {
-            Some(api_history)
+            Some(prepared.history)
         },
     };
 
@@ -296,7 +289,7 @@ async fn run_think_turn(
 
     think_history.push(BrainTurn {
         role: "user".to_string(),
-        content: optimized_prompt,
+        content: raw_prompt.to_string(),
     });
     think_history.push(BrainTurn {
         role: "assistant".to_string(),
