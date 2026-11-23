@@ -46,41 +46,29 @@ pub struct ThoughtResult {
     pub commands: Vec<String>,
 }
 
-/// Parses all [NEED_FILE: path] tags from an agent response.
+/// Callback invoked when a stage or `ask` turn requests `[EXEC_CMD: <command>]`.
+/// Returns `true` if the user approves immediate execution, `false` to decline.
+pub type CmdApprovalFn = std::sync::Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
+/// Parses all [NEED_FILE: path] tags from an agent response via `parse_directives`.
 pub fn parse_need_file_tags(text: &str) -> HashSet<String> {
-    let mut files = HashSet::new();
-    let mut start_idx = 0;
-    while let Some(open_pos) = text[start_idx..].find("[NEED_FILE:") {
-        let abs_open = start_idx + open_pos;
-        if let Some(close_pos) = text[abs_open..].find(']') {
-            let tag_content = &text[abs_open + 11..abs_open + close_pos];
-            let clean_path = tag_content.trim().trim_matches('`').trim();
-            if !clean_path.is_empty() {
-                files.insert(clean_path.to_string());
-            }
-            start_idx = abs_open + close_pos + 1;
-        } else {
-            break;
-        }
-    }
-    files
+    parse_directives(text)
+        .into_iter()
+        .filter_map(|d| match d {
+            AgentDirective::NeedFile(p) => Some(p),
+            _ => None,
+        })
+        .collect()
 }
 
-/// Parses all [EXEC_CMD: command] tags from an agent response.
+/// Parses all [EXEC_CMD: command] tags from an agent response via `parse_directives`.
 pub fn parse_exec_cmd_tags(text: &str) -> Vec<String> {
     let mut commands = Vec::new();
-    let mut start_idx = 0;
-    while let Some(open_pos) = text[start_idx..].find("[EXEC_CMD:") {
-        let abs_open = start_idx + open_pos;
-        if let Some(close_pos) = text[abs_open..].find(']') {
-            let tag_content = &text[abs_open + 10..abs_open + close_pos];
-            let clean_cmd = tag_content.trim().trim_matches('`').trim();
-            if !clean_cmd.is_empty() && !commands.contains(&clean_cmd.to_string()) {
-                commands.push(clean_cmd.to_string());
-            }
-            start_idx = abs_open + close_pos + 1;
-        } else {
-            break;
+    for d in parse_directives(text) {
+        if let AgentDirective::ExecCmd(cmd) = d
+            && !commands.contains(&cmd)
+        {
+            commands.push(cmd);
         }
     }
     commands
@@ -178,43 +166,188 @@ pub async fn run_single_turn(
     }
 }
 
-/// Absorbs any `[USE_SKILL: ...]` or `[NEED_DIR: ...]` directives emitted by a stage.
-fn absorb_stage_directives(
+/// Tracks resolved files, skills, web lookups, and commands across reasoning stages or `ask` rounds.
+#[derive(Default)]
+pub(crate) struct DirectiveState {
+    pub loaded_files: HashSet<String>,
+    pub loaded_skills: HashSet<String>,
+    pub skill_guidelines: String,
+    pub executed_cmds: HashSet<String>,
+    pub fetched_urls: HashSet<String>,
+    pub searched_queries: HashSet<String>,
+    pub created_pods: bool,
+    pub pending_commands: Vec<String>,
+}
+
+pub(crate) fn append_skills(base: &str, skills: &str) -> String {
+    if skills.is_empty() {
+        base.to_string()
+    } else {
+        format!("{}{}", base, skills)
+    }
+}
+
+async fn run_approved_command(root: &Path, cmd: &str) -> String {
+    let _heavy_guard = if super::command_guard::is_heavy_command(cmd) {
+        Some(super::command_guard::acquire_heavy_command_guard().await)
+    } else {
+        None
+    };
+
+    #[cfg(windows)]
+    let mut command = {
+        let mut c = tokio::process::Command::new("cmd");
+        c.args(["/C", cmd]);
+        c
+    };
+    #[cfg(not(windows))]
+    let mut command = {
+        let mut c = tokio::process::Command::new("sh");
+        c.args(["-c", cmd]);
+        c
+    };
+
+    command.current_dir(root);
+    match tokio::time::timeout(std::time::Duration::from_secs(60), command.output()).await {
+        Ok(Ok(out)) => {
+            let code = out.status.code().unwrap_or(-1);
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let combined = format!("{}{}", stdout, stderr);
+            let truncated: String = combined.chars().take(4000).collect();
+            format!("Exit code: {}\n```text\n{}\n```", code, truncated.trim_end())
+        }
+        Ok(Err(e)) => format!("Execution error: {}", e),
+        Err(_) => "Execution timed out after 60s.".to_string(),
+    }
+}
+
+/// Resolves all `DIRECTIVES_PROTOCOL` triggers emitted in a stage or `ask` turn and injects
+/// results into `history` / `state` before the next stage runs. Returns `true` if new context was added.
+pub(crate) async fn absorb_stage_directives(
     stage_output: &str,
-    loaded_skills: &mut HashSet<String>,
-    skill_guidelines: &mut String,
+    root: &Path,
     files_index: &FilesMapIndex,
-    think_history: &mut Vec<BrainTurn>,
-) {
-    let mut expanded_dirs = Vec::new();
+    state: &mut DirectiveState,
+    safety: &SafetyGuard,
+    cmd_approval: Option<&CmdApprovalFn>,
+    history: &mut Vec<BrainTurn>,
+) -> bool {
+    let mut added_blocks: Vec<String> = Vec::new();
+    let mut added_skills = false;
+    let web_loader = crate::infrastructure::knowledge::web_loader::WebScraper::new();
+
     for directive in parse_directives(stage_output) {
         match directive {
             AgentDirective::UseSkill(s) => {
-                if loaded_skills.insert(s.clone())
+                if state.loaded_skills.insert(s.clone())
                     && let Some(instructions) = resolve_builtin_skill(&s)
                 {
-                    skill_guidelines.push_str(&format!(
+                    state.skill_guidelines.push_str(&format!(
                         "\n\n---\n## OPERATIONAL GUIDELINES: {}\n{}\n---\n",
                         s.to_uppercase(),
                         instructions
                     ));
+                    added_skills = true;
                 }
             }
             AgentDirective::NeedDir { id, page } => {
                 if let Some(listing) = files_index.render_group(id, page, 50) {
-                    expanded_dirs.push(listing);
+                    added_blocks.push(format!("### Expanded Directory Group {}\n{}", id, listing));
                 }
             }
-            _ => {}
+            AgentDirective::NeedFile(path) => {
+                if state.loaded_files.insert(path.clone()) {
+                    let block = read_workspace_file(root, &path)
+                        .unwrap_or_else(|| format!("### File: {}\n(Not found in workspace)\n", path));
+                    added_blocks.push(block);
+                }
+            }
+            AgentDirective::WebSearch(query) => {
+                if state.searched_queries.insert(query.clone()) {
+                    let res = tokio::time::timeout(
+                        std::time::Duration::from_secs(15),
+                        web_loader.search_web(&query, root),
+                    )
+                    .await;
+                    let summary = match res {
+                        Ok(Ok(items)) if !items.is_empty() => items
+                            .into_iter()
+                            .take(5)
+                            .map(|r| format!("- [{}]({}): {}", r.title, r.url, r.snippet))
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                        Ok(Ok(_)) => "No results found.".to_string(),
+                        Ok(Err(e)) => format!("Web search error: {}", e),
+                        Err(_) => "Web search timed out.".to_string(),
+                    };
+                    added_blocks.push(format!("### Web Search: {}\n{}", query, summary));
+                }
+            }
+            AgentDirective::WebUrl(url) => {
+                if state.fetched_urls.insert(url.clone()) {
+                    let res = tokio::time::timeout(
+                        std::time::Duration::from_secs(15),
+                        web_loader.fetch_url(&url),
+                    )
+                    .await;
+                    let body = match res {
+                        Ok(Ok(doc)) => doc.content.chars().take(6000).collect::<String>(),
+                        Ok(Err(e)) => format!("Failed to fetch URL: {}", e),
+                        Err(_) => "URL fetch timed out.".to_string(),
+                    };
+                    added_blocks.push(format!("### Web Page: {}\n{}", url, body));
+                }
+            }
+            AgentDirective::CreatePod { .. } => {
+                if !state.created_pods {
+                    let _ = crate::domain::pod::AgentPod::process_autonomous_pod_creations(
+                        root,
+                        stage_output,
+                    );
+                    state.created_pods = true;
+                }
+            }
+            AgentDirective::ExecCmd(cmd) => {
+                if !state.executed_cmds.insert(cmd.clone()) {
+                    continue;
+                }
+                if let Err(err) = safety.validate_intent(&cmd) {
+                    added_blocks.push(format!("### Command Blocked: `{}`\n{}", cmd, err));
+                    continue;
+                }
+                let Some(cb) = cmd_approval.cloned() else {
+                    if !state.pending_commands.contains(&cmd) {
+                        state.pending_commands.push(cmd);
+                    }
+                    continue;
+                };
+                let cmd_for_cb = cmd.clone();
+                let approved = tokio::task::spawn_blocking(move || cb(&cmd_for_cb))
+                    .await
+                    .unwrap_or(false);
+                if approved {
+                    let out = run_approved_command(root, &cmd).await;
+                    added_blocks.push(format!("### Command Output: `{}`\n{}", cmd, out));
+                } else {
+                    added_blocks.push(format!(
+                        "### Command Declined: `{}`\nUser declined executing this command.",
+                        cmd
+                    ));
+                }
+            }
         }
     }
 
-    if !expanded_dirs.is_empty() {
-        think_history.push(BrainTurn {
+    if !added_blocks.is_empty() {
+        history.push(BrainTurn {
             role: "user".to_string(),
-            content: format!("### Expanded Directory Groups\n{}", expanded_dirs.join("\n\n")),
+            content: added_blocks.join("\n\n"),
         });
+        return true;
     }
+
+    added_skills
 }
 
 /// Executes a stage of the `think` loop using `prepare_structured_prompt` so `laws` and
@@ -367,9 +500,42 @@ pub async fn execute_thought_loop_with_history<F>(
     root: &Path,
     provider_opt: Option<&str>,
     model_opt: Option<&str>,
+    progress_callback: Option<F>,
+    system_override: Option<&str>,
+    history: Option<&[crate::infrastructure::llm::history_manager::BrainTurn]>,
+) -> Result<ThoughtResult>
+where
+    F: FnMut(ThoughtPhase) + Send + Sync,
+{
+    execute_thought_loop_with_options(
+        task,
+        files,
+        config,
+        root,
+        provider_opt,
+        model_opt,
+        progress_callback,
+        system_override,
+        history,
+        None,
+    )
+    .await
+}
+
+/// Executes a full 4-turn reflective reasoning loop with optional custom system laws,
+/// conversation history, and an interactive `[EXEC_CMD]` approval callback for intermediate stages.
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_thought_loop_with_options<F>(
+    task: &str,
+    files: &[String],
+    config: &UnevenConfig,
+    root: &Path,
+    provider_opt: Option<&str>,
+    model_opt: Option<&str>,
     mut progress_callback: Option<F>,
     system_override: Option<&str>,
     history: Option<&[crate::infrastructure::llm::history_manager::BrainTurn]>,
+    cmd_approval: Option<CmdApprovalFn>,
 ) -> Result<ThoughtResult>
 where
     F: FnMut(ThoughtPhase) + Send + Sync,
@@ -515,6 +681,13 @@ where
         Vec::new()
     };
 
+    let mut directive_state = DirectiveState {
+        loaded_files,
+        loaded_skills,
+        skill_guidelines,
+        ..Default::default()
+    };
+
     // ─────────────────────────────────────────────────────────────────────────────
     // TURN 1: Draft Proposal (Actor)
     // ─────────────────────────────────────────────────────────────────────────────
@@ -522,19 +695,19 @@ where
         cb(ThoughtPhase::Drafting);
     }
 
-    let mut draft_base = system_override
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| laws::get_context_in_root("think_draft", Some(root)));
-    if !skill_guidelines.is_empty() {
-        draft_base.push_str(&skill_guidelines);
-    }
+    let draft_base = append_skills(
+        &system_override
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| laws::get_context_in_root("think_draft", Some(root))),
+        &directive_state.skill_guidelines,
+    );
 
     let draft_system = format!(
         "{}\n\n[PHASE: DRAFTING - Produce an initial concrete solution, architecture plan, and preliminary diffs.]",
         draft_base
     );
     let draft_prompt = format!(
-        "User Request: {}\n\nFormulate a preliminary solution plan and the necessary code changes.",
+        "User Request: {}\n\nFormulate the initial solution plan and preliminary changes based strictly on the provided codebase context.",
         task
     );
 
@@ -550,7 +723,16 @@ where
     .await
     .map_err(|e| anyhow::anyhow!("Draft phase failed: {}", e))?;
 
-    absorb_stage_directives(&draft_response, &mut loaded_skills, &mut skill_guidelines, &files_index, &mut think_history);
+    absorb_stage_directives(
+        &draft_response,
+        root,
+        &files_index,
+        &mut directive_state,
+        &safety,
+        cmd_approval.as_ref(),
+        &mut think_history,
+    )
+    .await;
 
     // ─────────────────────────────────────────────────────────────────────────────
     // INTERMEDIATE 1: Rubber Duck Problem Decomposition (Unpacking Draft)
@@ -559,12 +741,12 @@ where
         cb(ThoughtPhase::RubberDuckingDraft);
     }
 
-    let duck_draft_system = laws::get_context_in_root("think_duck_draft", Some(root));
-    let duck_draft_prompt = "\
-        In 3 to 4 concise technical bullet points, explain your draft above to your Rubber Duck:\n\
-        1. Core Mechanism: What approach was chosen and why over alternatives?\n\
-        2. Implicit Assumptions: What types, system states, or caller contracts are assumed?\n\
-        3. Fragility & Edge Cases: Where is this most vulnerable to failure under unexpected conditions?";
+    let duck_draft_system = append_skills(
+        &laws::get_context_in_root("think_duck_draft", Some(root)),
+        &directive_state.skill_guidelines,
+    );
+    let duck_draft_prompt =
+        "Explain your draft above to your Rubber Duck following your system guidelines.";
 
     let duck_draft_reflection = run_think_turn(
         &mut think_history,
@@ -578,6 +760,17 @@ where
     .await
     .unwrap_or_else(|_| "Rubber Duck Draft reflection unavailable.".to_string());
 
+    absorb_stage_directives(
+        &duck_draft_reflection,
+        root,
+        &files_index,
+        &mut directive_state,
+        &safety,
+        cmd_approval.as_ref(),
+        &mut think_history,
+    )
+    .await;
+
     // ─────────────────────────────────────────────────────────────────────────────
     // TURN 2: Internal Critic & Contextual Audit (The Critic Loop)
     // ─────────────────────────────────────────────────────────────────────────────
@@ -585,8 +778,11 @@ where
         cb(ThoughtPhase::Auditing);
     }
 
-    let critic_system = laws::get_context_in_root("think_audit", Some(root));
-    let critic_prompt = "Perform the contextual self-critique and audit of the proposed draft above, enumerating any required corrections.";
+    let critic_system = append_skills(
+        &laws::get_context_in_root("think_audit", Some(root)),
+        &directive_state.skill_guidelines,
+    );
+    let critic_prompt = "Audit the draft above against the user request and codebase context, listing any defects or required fixes.";
 
     let critic_findings = run_think_turn(
         &mut think_history,
@@ -600,7 +796,16 @@ where
     .await
     .map_err(|e| anyhow::anyhow!("Critic audit phase failed: {}", e))?;
 
-    absorb_stage_directives(&critic_findings, &mut loaded_skills, &mut skill_guidelines, &files_index, &mut think_history);
+    absorb_stage_directives(
+        &critic_findings,
+        root,
+        &files_index,
+        &mut directive_state,
+        &safety,
+        cmd_approval.as_ref(),
+        &mut think_history,
+    )
+    .await;
 
     // ─────────────────────────────────────────────────────────────────────────────
     // TURN 3: Scope & Code Integrity Guard (Anti-Regression & Anti-Hallucination)
@@ -609,8 +814,11 @@ where
         cb(ThoughtPhase::VerifyingIntegrity);
     }
 
-    let integrity_system = laws::get_context_in_root("think_integrity", Some(root));
-    let integrity_prompt = "Perform the Scope & Code Integrity Check against the draft and critic findings above, and provide your verdict.";
+    let integrity_system = append_skills(
+        &laws::get_context_in_root("think_integrity", Some(root)),
+        &directive_state.skill_guidelines,
+    );
+    let integrity_prompt = "Verify scope and code integrity against the draft and critic findings above, and output your verdict.";
 
     let integrity_findings = run_think_turn(
         &mut think_history,
@@ -624,7 +832,16 @@ where
     .await
     .map_err(|e| anyhow::anyhow!("Integrity verification phase failed: {}", e))?;
 
-    absorb_stage_directives(&integrity_findings, &mut loaded_skills, &mut skill_guidelines, &files_index, &mut think_history);
+    absorb_stage_directives(
+        &integrity_findings,
+        root,
+        &files_index,
+        &mut directive_state,
+        &safety,
+        cmd_approval.as_ref(),
+        &mut think_history,
+    )
+    .await;
 
     // ─────────────────────────────────────────────────────────────────────────────
     // INTERMEDIATE 2: Rubber Duck Pre-Flight Execution Simulation (Dry-Run Walkthrough)
@@ -633,12 +850,12 @@ where
         cb(ThoughtPhase::RubberDuckingSimulation);
     }
 
-    let duck_sim_system = laws::get_context_in_root("think_duck_simulation", Some(root));
-    let duck_sim_prompt = "\
-        Walk through the execution flow with your Rubber Duck in 3 to 4 concise bullet points:\n\
-        1. Step-by-Step Runtime Trace: Trace execution from entry to exit with expected types/returns.\n\
-        2. Reconciliation Check: Confirm all Critic & Integrity points are accounted for.\n\
-        3. Import & Contract Defense: Ensure no missing imports or broken external callers.";
+    let duck_sim_system = append_skills(
+        &laws::get_context_in_root("think_duck_simulation", Some(root)),
+        &directive_state.skill_guidelines,
+    );
+    let duck_sim_prompt =
+        "Run your pre-flight dry-run simulation over the reconciled solution following your system guidelines.";
 
     let duck_simulation_trace = run_think_turn(
         &mut think_history,
@@ -652,6 +869,17 @@ where
     .await
     .unwrap_or_else(|_| "Rubber Duck Simulation trace unavailable.".to_string());
 
+    absorb_stage_directives(
+        &duck_simulation_trace,
+        root,
+        &files_index,
+        &mut directive_state,
+        &safety,
+        cmd_approval.as_ref(),
+        &mut think_history,
+    )
+    .await;
+
     // ─────────────────────────────────────────────────────────────────────────────
     // TURN 4: Synthesis & Final Assured Patch
     // ─────────────────────────────────────────────────────────────────────────────
@@ -659,28 +887,20 @@ where
         cb(ThoughtPhase::Synthesizing);
     }
 
-    let mut synthesis_base = system_override
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| laws::get_context_in_root("think_synthesis", Some(root)));
-    if !skill_guidelines.is_empty() {
-        synthesis_base.push_str(&skill_guidelines);
-    }
+    let synthesis_base = append_skills(
+        &system_override
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| laws::get_context_in_root("think_synthesis", Some(root))),
+        &directive_state.skill_guidelines,
+    );
 
     let synthesis_system = format!(
         "{}\n\n[PHASE: FINAL SYNTHESIS - Eliminate all issues flagged by the Critic and enforce Scope & Code Integrity. Deliver the final proposal and structured Markdown patches.]",
         synthesis_base
     );
 
-    let synthesis_prompt = "\
-        Produce the FINAL, flawless response for the user in clean Markdown:\n\
-        1. Human-Facing Overview & Explanations: Formulate naturally in the user's primary language without robotic, bureaucratic, or unnatural phrasing.\n\
-        2. Technical & Code Discipline: All source code, diff hunks, functions, variable names, and comments MUST strictly remain in English.\n\
-        3. Adaptive Code Mutation & Presentation Strategy:\n\
-           - If executing an approved plan or follow-up confirmation from the conversation: output the exact, surgical Markdown file actions ('Action: create' with complete content or 'Action: edit' with SEARCH/REPLACE blocks) ready for immediate disk application. Do NOT ask for confirmation again.\n\
-           - For micro-mutations: output exact surgical Markdown file actions.\n\
-           - For medium/large multi-file architecture tasks proposed for the first time without prior approval: present the Architectural Blueprint first and ask naturally if the user would like to proceed.\n\
-           - For pure conceptual Q&A: do not output any file actions.\n\
-        4. Terminal Commands Execution: When a task benefits from executing terminal commands natively (such as project bootstrapping, dependency management, compilation checks, or running test suites with the project's native toolchain), emit `[EXEC_CMD: <command>]`. Prefer using the standard ecosystem CLI toolchain of the target technology for scaffolding rather than manually synthesizing boilerplate files.";
+    let synthesis_prompt =
+        "Deliver the final verified response and patches for the user, resolving all Critic and Integrity findings.";
 
     let final_answer = run_think_turn(
         &mut think_history,
@@ -703,7 +923,12 @@ where
     // 8. Parse patch objects and CLI command tags if present
     let session_id = uuid::Uuid::new_v4().to_string();
     let parsed_file_obj = file_object(&sanitized_answer, &session_id);
-    let parsed_commands = parse_exec_cmd_tags(&sanitized_answer);
+    let mut parsed_commands = directive_state.pending_commands;
+    for cmd in parse_exec_cmd_tags(&sanitized_answer) {
+        if !parsed_commands.contains(&cmd) {
+            parsed_commands.push(cmd);
+        }
+    }
 
     // 9. Clean chat proposal for human readability (strips internal directives and replaces machine SEARCH/REPLACE blocks with clean diffs)
     let clean_output = strip_directives(&sanitized_answer);
@@ -791,5 +1016,80 @@ mod tests {
         };
         assert_eq!(res.duck_draft_reflection, "Duck 1");
         assert_eq!(res.duck_simulation_trace, "Duck 2");
+    }
+
+    #[tokio::test]
+    async fn test_absorb_stage_directives_exec_cmd_approved_and_declined() {
+        let dir = tempfile::tempdir().unwrap();
+        let files_index = FilesMapIndex::build(dir.path(), None);
+        let safety = SafetyGuard::new();
+        let mut state = DirectiveState::default();
+        let mut history = Vec::new();
+
+        let approve_cb: CmdApprovalFn = std::sync::Arc::new(|_| true);
+        let added = absorb_stage_directives(
+            "Check output: [EXEC_CMD: echo hello_directive]",
+            dir.path(),
+            &files_index,
+            &mut state,
+            &safety,
+            Some(&approve_cb),
+            &mut history,
+        )
+        .await;
+        assert!(added);
+        assert_eq!(history.len(), 1);
+        assert!(history[0].content.contains("Command Output"));
+        assert!(history[0].content.contains("hello_directive"));
+
+        let decline_cb: CmdApprovalFn = std::sync::Arc::new(|_| false);
+        let added_decline = absorb_stage_directives(
+            "Declined: [EXEC_CMD: echo declined_cmd]",
+            dir.path(),
+            &files_index,
+            &mut state,
+            &safety,
+            Some(&decline_cb),
+            &mut history,
+        )
+        .await;
+        assert!(added_decline);
+        assert_eq!(history.len(), 2);
+        assert!(history[1].content.contains("Command Declined"));
+    }
+
+    #[tokio::test]
+    async fn test_absorb_stage_directives_need_file_and_dedup() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("sample.txt"), "sample content").unwrap();
+        let files_index = FilesMapIndex::build(dir.path(), None);
+        let safety = SafetyGuard::new();
+        let mut state = DirectiveState::default();
+        let mut history = Vec::new();
+
+        let added = absorb_stage_directives(
+            "Read [NEED_FILE: sample.txt]",
+            dir.path(),
+            &files_index,
+            &mut state,
+            &safety,
+            None,
+            &mut history,
+        )
+        .await;
+        assert!(added);
+        assert!(history[0].content.contains("sample content"));
+
+        let added_again = absorb_stage_directives(
+            "Read again [NEED_FILE: sample.txt]",
+            dir.path(),
+            &files_index,
+            &mut state,
+            &safety,
+            None,
+            &mut history,
+        )
+        .await;
+        assert!(!added_again);
     }
 }

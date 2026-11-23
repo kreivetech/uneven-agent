@@ -3,13 +3,13 @@ use catfive::{string, Validator};
 /// Fixed protocol describing all unified inline directives available to reasoning stages.
 /// Descriptions mirror `laws.rs` verbatim to prevent drift or hallucinations.
 pub const DIRECTIVES_PROTOCOL: &str = r#"## Available System Directives
-You may output ONE or MORE of the following system triggers when needed:
-- `[NEED_FILE: relative/path/to/file]` — Request full content of a workspace file.
+You may emit ONE or MORE of the following triggers in any stage when needed; resolved results are returned in the conversation before the next step:
+- `[NEED_FILE: relative/path/to/file]` — Load the full content of a workspace file into context.
 - `[NEED_DIR: group_id]` or `[NEED_DIR: group_id | page]` — Expand the paginated file list of a directory group from the workspace files map.
-- `[WEB_SEARCH: query]` — Search external library docs, API references, or error messages.
-- `[WEB_URL: url]` — Fetch full documentation content from a web page.
+- `[WEB_SEARCH: query]` — Search external library docs, API references, or error messages on the web.
+- `[WEB_URL: url]` — Fetch full documentation content from an `http(s)://` web page.
 - `[USE_SKILL: skill_name]` — Dynamically load **internal built-in** system guidelines only (e.g. `[USE_SKILL: explain]`, `[USE_SKILL: docs]`, `[USE_SKILL: zeroday]`). To read user/workspace skills (e.g. `.uneven/skills/*` or `.agents/skills/*`), use `[NEED_FILE: relative/path/to/file]` instead.
-- `[EXEC_CMD: <command>]` — Emit terminal commands when required (such as project scaffolding, package installation, builds, or test suites).
+- `[EXEC_CMD: <single-line command>]` — Request execution of a single-line terminal command (no `]` inside the command). Requires user approval; when approved, its exit code and output are returned to context before the next step (or listed as final commands in synthesis).
 - `[CREATE_POD: <Pod Title> | <Prime Specialist Role> | <Instructions> | <file1>, <file2>]` — Autonomously instantiate a domain-specialized Agent Pod when you identify an architectural subsystem that warrants isolated focus, specialized law, and domain boundaries (users cannot manually create Pods)."#;
 
 /// Appends the fixed `DIRECTIVES_PROTOCOL` to a stage-specific `base_law`.

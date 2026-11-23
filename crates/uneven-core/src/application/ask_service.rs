@@ -1,9 +1,12 @@
 use super::context_assembler::ContextAssembler;
-use super::think_service::run_single_turn;
-use crate::infrastructure::llm::history_manager::{
-    get_project_files_map, prepare_structured_prompt, BrainTurn,
+use super::think_service::{
+    absorb_stage_directives, append_skills, CmdApprovalFn, DirectiveState,
 };
-use crate::infrastructure::llm::init as init_llm;
+use crate::domain::directives::strip_directives;
+use crate::infrastructure::llm::history_manager::{
+    get_project_files_map, load_or_build_files_map, prepare_structured_prompt, BrainTurn,
+};
+use crate::infrastructure::llm::{infer_with_params, init as init_llm, InferParams};
 use crate::infrastructure::security::laws;
 use crate::infrastructure::security::SafetyGuard;
 use crate::UnevenConfig;
@@ -52,8 +55,35 @@ pub async fn execute_ask_with_system(
     root: &Path,
     provider_opt: Option<&str>,
     model_opt: Option<&str>,
+    history: Option<&mut Vec<BrainTurn>>,
+    system_override: Option<&str>,
+) -> Result<AskResult> {
+    execute_ask_with_options(
+        question,
+        files,
+        config,
+        root,
+        provider_opt,
+        model_opt,
+        history,
+        system_override,
+        None,
+    )
+    .await
+}
+
+/// Executes a contextual `ask` inquiry with optional custom system laws and `[EXEC_CMD]` approval callback.
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_ask_with_options(
+    question: &str,
+    files: &[String],
+    config: &UnevenConfig,
+    root: &Path,
+    provider_opt: Option<&str>,
+    model_opt: Option<&str>,
     mut history: Option<&mut Vec<BrainTurn>>,
     system_override: Option<&str>,
+    cmd_approval: Option<CmdApprovalFn>,
 ) -> Result<AskResult> {
     // 1. Safety Guard Validation (Shield)
     let safety = SafetyGuard::new();
@@ -110,24 +140,86 @@ pub async fn execute_ask_with_system(
         context, question
     );
 
-    // 5. Optimize Context (Auto-compact history if needed and combine laws + files_map into system)
-    let (prompt, effective_system) = if let Some(ref mut hist) = history {
+    // 5. Optimize Context and run unbounded directive resolution loop until model finishes
+    let files_index = load_or_build_files_map(root);
+    let files_map = get_project_files_map(config, root);
+    let mut tool_history: Vec<BrainTurn> = if let Some(ref mut hist) = history {
         crate::application::ContextCompactorService::auto_compact(hist);
-        let files_map = get_project_files_map(config, root);
-        let prepared = prepare_structured_prompt(hist, &raw_prompt, &system_instructions, Some(&files_map));
-        (
-            prepared.prompt,
-            prepared.system.unwrap_or_else(|| system_instructions.clone()),
-        )
+        hist.clone()
     } else {
-        (raw_prompt, system_instructions.clone())
+        Vec::new()
     };
 
-    // 6. Execute inference turn
-    let raw_response = run_single_turn(&prompt, &effective_system, &brain, threads, max_context).await?;
+    let mut directive_state = DirectiveState {
+        loaded_files: files.iter().cloned().collect(),
+        ..Default::default()
+    };
+    let mut current_prompt = raw_prompt;
+    let mut raw_response;
 
-    // 7. Sanitize response with Security Guard
-    let sanitized_response = safety.sanitize_response(&raw_response);
+    loop {
+        let sys_with_skills = append_skills(&system_instructions, &directive_state.skill_guidelines);
+        let prepared = prepare_structured_prompt(
+            &tool_history,
+            &current_prompt,
+            &sys_with_skills,
+            Some(&files_map),
+        );
+        let params = InferParams {
+            model: brain.model.clone(),
+            threads,
+            max_tokens: brain.max_tokens,
+            temperature: brain.temperature as f64,
+            repeat_penalty: 1.1,
+            max_context,
+            grammar: None,
+            provider: Some(brain.provider.clone()),
+            system: prepared.system.or(Some(sys_with_skills)),
+            history: if prepared.history.is_empty() {
+                None
+            } else {
+                Some(prepared.history)
+            },
+        };
+
+        raw_response = infer_with_params(&prepared.prompt, &params).await?.content;
+
+        let mut next_turns = Vec::new();
+        let added = absorb_stage_directives(
+            &raw_response,
+            root,
+            &files_index,
+            &mut directive_state,
+            &safety,
+            cmd_approval.as_ref(),
+            &mut next_turns,
+        )
+        .await;
+
+        if !added {
+            break;
+        }
+
+        tool_history.push(BrainTurn {
+            role: "user".to_string(),
+            content: current_prompt,
+        });
+        tool_history.push(BrainTurn {
+            role: "assistant".to_string(),
+            content: raw_response,
+        });
+        current_prompt = next_turns
+            .into_iter()
+            .map(|t| t.content)
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        if current_prompt.trim().is_empty() {
+            current_prompt = "Continue answering the user question with the loaded guidelines.".to_string();
+        }
+    }
+
+    // 7. Sanitize response with Security Guard and strip directive tags
+    let sanitized_response = strip_directives(&safety.sanitize_response(&raw_response));
 
     // 8. Update conversation history
     if let Some(ref mut hist) = history {

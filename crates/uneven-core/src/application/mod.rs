@@ -15,7 +15,7 @@ pub mod token_quota_service;
 pub mod update_service;
 pub mod zeroday_service;
 
-pub use ask_service::{execute_ask, execute_ask_with_system, AskResult};
+pub use ask_service::{execute_ask, execute_ask_with_options, execute_ask_with_system, AskResult};
 pub use command_guard::*;
 pub use context_assembler::ContextAssembler;
 pub use context_compactor::{CompactionOutcome, ContextCompactorService};
@@ -35,7 +35,8 @@ pub use shell_classifier::{
     tokenize_shell_input, ClassifiedIntent, ShellAction,
 };
 pub use think_service::{
-    execute_thought_loop, execute_thought_loop_with_history, execute_thought_loop_with_system, ThoughtPhase, ThoughtResult,
+    execute_thought_loop, execute_thought_loop_with_history, execute_thought_loop_with_options,
+    execute_thought_loop_with_system, CmdApprovalFn, ThoughtPhase, ThoughtResult,
 };
 pub use token_quota_service::{TokenQuotaMetrics, TokenQuotaService};
 pub use update_service::{IdeUpdateInfo, UpdateService};

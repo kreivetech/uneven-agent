@@ -4,7 +4,7 @@ use anyhow::Result;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::io::{IsTerminal, Write};
 use uneven_core::application::think_service::{
-    execute_thought_loop, ThoughtPhase,
+    execute_thought_loop_with_options, CmdApprovalFn, ThoughtPhase,
 };
 #[allow(unused_imports)]
 pub use uneven_core::application::think_service::parse_need_file_tags;
@@ -67,7 +67,22 @@ pub async fn run(
         ThoughtPhase::Completed => {}
     };
 
-    let result = execute_thought_loop(
+    let spinner_for_cmd = spinner.clone();
+    let cmd_approval: CmdApprovalFn = std::sync::Arc::new(move |cmd: &str| {
+        if !std::io::stdin().is_terminal() {
+            return false;
+        }
+        spinner_for_cmd.suspend(|| {
+            println!("\n  [EXEC_CMD] {}", cmd);
+            print!("  Approve execution? [y/N] > ");
+            let _ = std::io::stdout().flush();
+            let mut ans = String::new();
+            let _ = std::io::stdin().read_line(&mut ans);
+            matches!(ans.trim().to_lowercase().as_str(), "y" | "yes" | "s" | "sim")
+        })
+    });
+
+    let result = execute_thought_loop_with_options(
         &task,
         &files,
         &config,
@@ -75,6 +90,9 @@ pub async fn run(
         Some(provider),
         Some(model),
         Some(on_phase),
+        None,
+        None,
+        Some(cmd_approval),
     )
     .await;
 
