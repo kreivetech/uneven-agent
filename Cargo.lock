@@ -10311,7 +10311,7 @@ dependencies = [
 
 [[package]]
 name = "uneven-cli"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -10341,7 +10341,7 @@ dependencies = [
 
 [[package]]
 name = "uneven-core"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -10398,7 +10398,7 @@ dependencies = [
 
 [[package]]
 name = "uneven-ui"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "catfive",
  "dioxus",

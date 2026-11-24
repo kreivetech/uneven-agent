@@ -2,6 +2,13 @@
 
 All notable changes to Uneven Agent are documented in this file.
 
+## [v2.5.0] — November 2026
+
+- **Structured Context Separation (`contextcraft` 0.2.0)** — Upgraded `contextcraft` to `0.2.0` and introduced `prepare_structured_prompt` in `history_manager`, delivering `laws` and `files_map` via the provider `system` channel across `think`, `ask`, `shell`, `chat`, and `analyze` while keeping conversation history free of delimiter tags.
+- **Universal Directive Execution & Mid-Stage `[EXEC_CMD]` Approval (`think` & `ask`)** — Updated `DIRECTIVES_PROTOCOL` and expanded `absorb_stage_directives` to resolve `[NEED_FILE]`, `[NEED_DIR]`, `[USE_SKILL]`, `[WEB_SEARCH]`, `[WEB_URL]`, `[CREATE_POD]`, and `[EXEC_CMD]` across every `think` stage (including Rubber Duck stages) as well as an unbounded tool loop in `ask`; added interactive terminal approval in CLI `think` and a scrollable read-only command approval box (`OK` / `Cancel`) in `uneven-ui` (`v0.2.4`).
+- **SQL-Only BI `analyze` & Think Discipline Laws** — Upgraded `CONTEXT_ANALYZE` for SQL-only multi-dataset queries (` ```sql:<dataset> `) and structured ` ```dashboard ` YAML without prose explanations, and aligned `CONTEXT_THINK_DRAFT` / `CONTEXT_THINK_SYNTHESIS` with clean control flow, error sanitization, and emoji-free UI/CLI discipline.
+- **Snapcraft Classic Packaging** — Published a clean `snap/snapcraft.yaml` (`uneven-ide` `0.2.4`) with runtime `stage-packages` and `patchelf` RPATH/interpreter isolation.
+
 ## [v2.4.0] — November 2026
 
 - **Non-Blocking Security Scans & Batch LLM Review (`scan` / `pentest` / `zeroday`)** — Offloaded static analysis, supply-chain audits, `npm audit`, file counting, and report/SBOM generation off the Dioxus UI thread (`tokio::spawn` + `tokio::task::spawn_blocking`), resolved target paths against `project_root`, and batched `LLMSecurityReviewer` into a single Markdown review request with a ±5 line context window and dynamic model token/context limits.
