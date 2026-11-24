@@ -147,28 +147,28 @@ fn submit_prompt(
                     }
                     PatchActionKind::Failed { path, reason } => {
                         failed_count += 1;
-                        report_lines.push(format!("- ❌ Failed `{}`: {}", path, reason));
+                        report_lines.push(format!("- [FAIL] `{}`: {}", path, reason));
                     }
                     PatchActionKind::SkippedUnsafe(p) => {
                         failed_count += 1;
-                        report_lines.push(format!("- ⚠️ Skipped unsafe path: `{}`", p));
+                        report_lines.push(format!("- [BLOCKED] Skipped unsafe path: `{}`", p));
                     }
                 }
             }
 
             if !pending_commands.is_empty() {
-                report_lines.push("\n⚡ **Executed Commands:**".to_string());
+                report_lines.push("\n**Executed Commands:**".to_string());
                 for cmd in &pending_commands {
                     match execute_safe_command(cmd, &root, None).await {
                         Ok(cmd_res) => {
-                            let icon = if cmd_res.success { "✅" } else { "❌" };
-                            report_lines.push(format!("- {} `{}`", icon, cmd));
+                            let status = if cmd_res.success { "[OK]" } else { "[FAIL]" };
+                            report_lines.push(format!("- {} `{}`", status, cmd));
                             if !cmd_res.output.trim().is_empty() {
                                 report_lines.push(format!("  ```\n  {}\n  ```", cmd_res.output.trim()));
                             }
                         }
                         Err(e) => {
-                            report_lines.push(format!("- ⚠️ Blocked `{}`: {}", cmd, e));
+                            report_lines.push(format!("- [BLOCKED] `{}`: {}", cmd, e));
                         }
                     }
                 }
@@ -176,13 +176,13 @@ fn submit_prompt(
 
             let message_text = if failed_count == 0 {
                 format!(
-                    "✅ **Applied {} mutation(s) to disk successfully!**\n\n{}",
+                    "**Applied {} mutation(s) to disk.**\n\n{}",
                     success_count,
                     report_lines.join("\n")
                 )
             } else {
                 format!(
-                    "⚠️ **Applied with warnings** ({} successful, {} failed):\n\n{}",
+                    "**Applied with warnings** ({} successful, {} failed):\n\n{}",
                     success_count,
                     failed_count,
                     report_lines.join("\n")
@@ -296,7 +296,7 @@ fn submit_prompt(
                     let mut mutated_paths = Vec::new();
                     let pending_commands = state.read().thought_result.as_ref().map(|t| t.commands.clone()).unwrap_or_default();
                     let mut summary_lines = Vec::new();
-                    summary_lines.push("✅ **Patches applied successfully:**\n".to_string());
+                    summary_lines.push("**Patches applied:**\n".to_string());
                     for r in &results {
                         match &r.kind {
                             PatchActionKind::Created(p) => {
@@ -320,24 +320,24 @@ fn submit_prompt(
                                 mutated_paths.push(path.clone());
                                 summary_lines.push(format!("- Appended to `{}` (anchor: {})", path, anchor));
                             }
-                            PatchActionKind::Failed { path, reason } => summary_lines.push(format!("- ❌ Failed `{}`: {}", path, reason)),
-                            PatchActionKind::SkippedUnsafe(p) => summary_lines.push(format!("- ⚠️ Skipped unsafe `{}`", p)),
+                            PatchActionKind::Failed { path, reason } => summary_lines.push(format!("- [FAIL] `{}`: {}", path, reason)),
+                            PatchActionKind::SkippedUnsafe(p) => summary_lines.push(format!("- [BLOCKED] Skipped unsafe `{}`", p)),
                         }
                     }
                     uneven_core::infrastructure::llm::history_manager::refresh_files_map_paths(&root, &mutated_paths);
                     if !pending_commands.is_empty() {
-                        summary_lines.push("\n⚡ **Commands executed:**\n".to_string());
+                        summary_lines.push("\n**Commands executed:**\n".to_string());
                         for cmd in &pending_commands {
                             match execute_safe_command(cmd, &root, None).await {
                                 Ok(cmd_res) => {
-                                    let icon = if cmd_res.success { "✅" } else { "❌" };
-                                    summary_lines.push(format!("- {} `{}`", icon, cmd));
+                                    let status = if cmd_res.success { "[OK]" } else { "[FAIL]" };
+                                    summary_lines.push(format!("- {} `{}`", status, cmd));
                                     if !cmd_res.output.trim().is_empty() {
                                         summary_lines.push(format!("  ```\n  {}\n  ```", cmd_res.output.trim()));
                                     }
                                 }
                                 Err(e) => {
-                                    summary_lines.push(format!("- ⚠️ Blocked `{}`: {}", cmd, e));
+                                    summary_lines.push(format!("- [BLOCKED] `{}`: {}", cmd, e));
                                 }
                             }
                         }
@@ -381,7 +381,7 @@ fn submit_prompt(
                 state.write().thought_phase = None;
                 let reply = match execute_safe_command(&cmd_str, &root, None).await {
                     Ok(res) => {
-                        let status_badge = if res.success { "✅ **Command executed successfully:**" } else { "❌ **Command failed:**" };
+                        let status_badge = if res.success { "**Command executed:**" } else { "**Command failed:**" };
                         let output_block = if res.output.trim().is_empty() {
                             "*(No output)*".to_string()
                         } else {
@@ -390,7 +390,7 @@ fn submit_prompt(
                         format!("{}\n```bash\n{}\n```\n\n{}", status_badge, cmd_str, output_block)
                     }
                     Err(e) => {
-                        format!("⚠️ **Command execution blocked:** `{}`\n\n> {}", cmd_str, e)
+                        format!("**Command execution blocked:** `{}`\n\n> {}", cmd_str, e)
                     }
                 };
                 state.write().push_message(MessageRole::Assistant, reply.clone(), Vec::new());
@@ -902,7 +902,7 @@ fn submit_prompt(
                                     subtasks,
                                 } => {
                                     let mut plan_desc = format!(
-                                        "👑 **Prime Supervisor Architecture Plan**\n\n**Strategy:** {}\n\n**Delegated Pipeline ({} subtasks)**:\n",
+                                        "**Prime Supervisor Architecture Plan**\n\n**Strategy:** {}\n\n**Delegated Pipeline ({} subtasks)**:\n",
                                         strategy, total_subtasks
                                     );
                                     for sub in subtasks {
@@ -939,7 +939,7 @@ fn submit_prompt(
                                     summary,
                                 } => {
                                     let report = format!(
-                                        "⚙️ **Worker #{} Completed** ({} patch mutation(s)):\n\n{}",
+                                        "**Worker #{} Completed** ({} patch mutation(s)):\n\n{}",
                                         subagent_idx, patches_generated, summary
                                     );
                                     state_for_events.write().push_message(MessageRole::Assistant, report, Vec::new());
@@ -953,7 +953,7 @@ fn submit_prompt(
                                     state_for_events.write().thought_phase = None;
                                     state_for_events.write().push_message(
                                         MessageRole::Assistant,
-                                        format!("🏁 **Pipeline Complete:** {}", final_summary),
+                                        format!("**Pipeline Complete:** {}", final_summary),
                                         Vec::new(),
                                     );
 
@@ -973,7 +973,7 @@ fn submit_prompt(
                                     });
                                     hist.push(BrainTurn {
                                         role: "assistant".to_string(),
-                                        content: format!("🏁 **Pipeline Complete:** {}", final_summary),
+                                        content: format!("**Pipeline Complete:** {}", final_summary),
                                     });
                                     let _ = uneven_core::infrastructure::llm::history_manager::save_history_to_disk(&hist, &sess_id_events, &root_events);
                                 }
@@ -983,9 +983,9 @@ fn submit_prompt(
                                 } => {
                                     let err_text = match subagent_idx {
                                         Some(idx) => {
-                                            format!("⚠️ Worker #{} encountered an issue: {}", idx, reason)
+                                            format!("Worker #{} encountered an issue: {}", idx, reason)
                                         }
-                                        None => format!("⚠️ Supervisor planning error: {}", reason),
+                                        None => format!("Supervisor planning error: {}", reason),
                                     };
                                     state_for_events.write().push_message(MessageRole::Assistant, err_text, Vec::new());
 
@@ -1078,7 +1078,7 @@ fn submit_prompt(
                                 let mut summary_lines = Vec::new();
                                 if let Some(ref file_obj) = pending_patch {
                                     let results = apply_file_actions(&root, file_obj);
-                                    summary_lines.push("✅ **Patches applied successfully:**\n".to_string());
+                                    summary_lines.push("**Patches applied:**\n".to_string());
                                     for r in &results {
                                         match &r.kind {
                                             PatchActionKind::Created(p) => summary_lines.push(format!("- Created `{}`", p)),
@@ -1086,8 +1086,8 @@ fn submit_prompt(
                                             PatchActionKind::Renamed { from, to } => summary_lines.push(format!("- Renamed `{}` → `{}`", from, to)),
                                             PatchActionKind::Deleted(p) => summary_lines.push(format!("- Deleted `{}`", p)),
                                             PatchActionKind::Appended { path, anchor } => summary_lines.push(format!("- Appended to `{}` (anchor: {})", path, anchor)),
-                                            PatchActionKind::Failed { path, reason } => summary_lines.push(format!("- ❌ Failed `{}`: {}", path, reason)),
-                                            PatchActionKind::SkippedUnsafe(p) => summary_lines.push(format!("- ⚠️ Skipped unsafe `{}`", p)),
+                                            PatchActionKind::Failed { path, reason } => summary_lines.push(format!("- [FAIL] `{}`: {}", path, reason)),
+                                            PatchActionKind::SkippedUnsafe(p) => summary_lines.push(format!("- [BLOCKED] Skipped unsafe `{}`", p)),
                                         }
                                     }
                                 }
@@ -1096,18 +1096,18 @@ fn submit_prompt(
                                     if !summary_lines.is_empty() {
                                         summary_lines.push(String::new());
                                     }
-                                    summary_lines.push("⚡ **Commands executed:**\n".to_string());
+                                    summary_lines.push("**Commands executed:**\n".to_string());
                                     for cmd in &commands {
                                         match execute_safe_command(cmd, &root, None).await {
                                             Ok(cmd_res) => {
-                                                let icon = if cmd_res.success { "✅" } else { "❌" };
-                                                summary_lines.push(format!("- {} `{}`", icon, cmd));
+                                                let status = if cmd_res.success { "[OK]" } else { "[FAIL]" };
+                                                summary_lines.push(format!("- {} `{}`", status, cmd));
                                                 if !cmd_res.output.trim().is_empty() {
                                                     summary_lines.push(format!("  ```\n  {}\n  ```", cmd_res.output.trim()));
                                                 }
                                             }
                                             Err(e) => {
-                                                summary_lines.push(format!("- ⚠️ Blocked `{}`: {}", cmd, e));
+                                                summary_lines.push(format!("- [BLOCKED] `{}`: {}", cmd, e));
                                             }
                                         }
                                     }
@@ -1366,7 +1366,6 @@ pub fn PromptInput() -> Element {
                                         let curr = state.read().show_patch_viewer;
                                         state.write().show_patch_viewer = !curr;
                                     },
-                                    span { "📝" }
                                     span { "Patch ({count_str})" }
                                     span { class: "text-[10px] text-amber-400/70", if is_open { "▴" } else { "▾" } }
                                 }
@@ -1391,7 +1390,6 @@ pub fn PromptInput() -> Element {
                                         let curr = state.read().show_sql_inspector;
                                         state.write().show_sql_inspector = !curr;
                                     },
-                                    span { "🗄" }
                                     span { "SQL Approval" }
                                     span { class: "text-[10px] text-emerald-400/70", if is_sql_open { "▴" } else { "▾" } }
                                 }

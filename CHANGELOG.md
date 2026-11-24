@@ -2,6 +2,11 @@
 
 All notable changes to Uneven Agent are documented in this file.
 
+## [v2.5.1] — November 2026
+
+- **IDE Active Telemetry Ping (`uneven-ui` v0.2.5)** — Added startup `send_telemetry_ping()` alongside the update check in `uneven-ui` so active IDE installations report to edge telemetry.
+- **UI Output Cleanup** — Replaced generic emojis in `prompt_input` command execution, patch reports, multi-agent updates, and toolbar pills with clean `[OK]` / `[FAIL]` / `[BLOCKED]` indicators.
+
 ## [v2.5.0] — November 2026
 
 - **Structured Context Separation (`contextcraft` 0.2.0)** — Upgraded `contextcraft` to `0.2.0` and introduced `prepare_structured_prompt` in `history_manager`, delivering `laws` and `files_map` via the provider `system` channel across `think`, `ask`, `shell`, `chat`, and `analyze` while keeping conversation history free of delimiter tags.

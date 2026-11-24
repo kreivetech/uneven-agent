@@ -1,7 +1,7 @@
 name: uneven-ide
 title: Uneven IDE
 base: core26
-version: "0.2.4"
+version: "0.2.5"
 license: proprietary
 website: https://uneven.dev
 contact: mailto:contact@kreive.com.br

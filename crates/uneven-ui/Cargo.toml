@@ -1,6 +1,6 @@
 [package]
 name = "uneven-ui"
-version = "0.2.4"
+version = "0.2.5"
 description = "Uneven IDE - Preemptive security audits, surgical diffs, and safe analytics"
 edition.workspace = true
 authors.workspace = true
@@ -18,7 +18,7 @@ icon = [
     "icons/256x256.png",
     "icons/icon.ico",
 ]
-version = "0.2.4"
+version = "0.2.5"
 copyright = "Copyright (c) 2026 Kreive Tech"
 category = "Development"
 short_description = "IDE with preemptive security audits, surgical diffs, and safe analytics"

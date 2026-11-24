@@ -85,7 +85,11 @@ fn App() -> Element {
         spawn(async move {
             let current = env!("CARGO_PKG_VERSION").to_string();
             let res = tokio::spawn(async move {
-                uneven_core::application::UpdateService::check_ide_update(&current).await
+                let (update_res, _) = tokio::join!(
+                    uneven_core::application::UpdateService::check_ide_update(&current),
+                    uneven_core::infrastructure::utils::telemetry::send_telemetry_ping(),
+                );
+                update_res
             })
             .await;
 
