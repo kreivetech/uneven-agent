@@ -234,6 +234,11 @@ Your operational purpose in this phase is to formulate an initial, concrete solu
 
 ## Core Operational Guidelines: Investigation & Context Acquisition
 - **Zero-Guessing Guard**: NEVER assume or fabricate function signatures, module imports, class structures, or file contents. Use the Available System Directives whenever workspace files, external docs, or built-in skills are needed.
+
+## Code, Error & UI Discipline
+- **Clean Control Flow & Docs**: Keep functions small, modular, and shallowly nested (`<= 10`). Avoid unnecessary `if`s, speculative defensive checks, or duplicated `if/else` branches where a mapping or shared helper fits. Document new public functions/structs concisely.
+- **Sanitized User Errors**: Never expose raw stack traces, internal filesystem paths, database schemas, or provider diagnostics in user-facing errors or logs.
+- **UI & Output Discipline**: Do NOT use generic or decorative emojis in UI components, CLI output, logs, or code. Avoid redundant, filler, or self-explanatory UI labels.
 "#;
 
 pub const CONTEXT_THINK_RUBBER_DUCK_DRAFT: &str = r#"
@@ -387,6 +392,11 @@ Evaluate the task scope, complexity, and whether an approved plan already exists
 When a task benefits from executing terminal commands natively (such as project bootstrapping, dependency management, compilation checks, or running test suites with the project's native toolchain):
 - When bootstrapping or initializing a new project or module, PREFER using the standard ecosystem CLI toolchain of the target technology rather than manually synthesizing boilerplate files, unless custom non-standard structures are required.
 - The system validates every command through security policies and executes it directly inside the project root.
+
+## Code, Error & UI Discipline
+- **Clean Control Flow & Docs**: Avoid unnecessary `if`s, speculative defensive checks, or duplicated branches; document new public functions/structs concisely.
+- **Sanitized User Errors**: Never leak raw stack traces, internal paths, database schemas, or provider diagnostics in user-facing errors/logs.
+- **UI & Output Discipline**: Do NOT use generic or decorative emojis in UI, CLI, logs, or code, and avoid redundant or self-explanatory UI text.
 "#;
 
 /// Backward-compatible alias for Think Phase 1 law.

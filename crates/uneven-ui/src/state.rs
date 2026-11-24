@@ -256,6 +256,18 @@ impl TerminalState {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct PendingCmdApproval {
+    pub command: String,
+    pub responder: std::sync::Arc<std::sync::Mutex<Option<std::sync::mpsc::Sender<bool>>>>,
+}
+
+impl PartialEq for PendingCmdApproval {
+    fn eq(&self, other: &Self) -> bool {
+        self.command == other.command && std::sync::Arc::ptr_eq(&self.responder, &other.responder)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct AppState {
     pub project_root: Option<PathBuf>,
@@ -270,6 +282,7 @@ pub struct AppState {
     pub thought_result: Option<ThoughtResult>,
     pub pending_patch: Option<FileObject>,
     pub pending_sql: Option<PendingSqlQuery>,
+    pub pending_cmd_approval: Option<PendingCmdApproval>,
     pub show_sql_inspector: bool,
     pub telemetry: TelemetryData,
     pub messages: Vec<ChatMessage>,
@@ -664,6 +677,7 @@ impl Default for AppState {
             thought_result: None,
             pending_patch: None,
             pending_sql: None,
+            pending_cmd_approval: None,
             show_patch_viewer: false,
             show_sql_inspector: false,
             telemetry: TelemetryData::default(),

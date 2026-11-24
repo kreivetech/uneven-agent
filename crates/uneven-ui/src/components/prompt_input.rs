@@ -1,8 +1,8 @@
-use crate::state::{AppState, MessageRole, TelemetryData};
+use crate::state::{AppState, MessageRole, PendingCmdApproval, TelemetryData};
 use crate::utils::project::pick_and_attach_files;
 use dioxus::prelude::*;
 use std::time::Instant;
-use uneven_core::application::ask_service::execute_ask_with_system;
+use uneven_core::application::ask_service::execute_ask_with_options;
 use uneven_core::application::multi_agent_service::{
     execute_multi_agent_workflow, SupervisorEvent,
 };
@@ -10,12 +10,46 @@ use uneven_core::application::shell_classifier::{
     classify_shell_intent, is_approval_intent, ShellAction,
 };
 use uneven_core::application::think_service::{
-    execute_thought_loop_with_history, ThoughtPhase,
+    execute_thought_loop_with_options, CmdApprovalFn, ThoughtPhase,
 };
 use uneven_core::infrastructure::llm::history_manager::BrainTurn;
 use uneven_core::infrastructure::llm::{ensure_local_model_files, is_local_model_downloaded};
 use uneven_core::infrastructure::patch::{apply_file_actions, PatchActionKind};
 use uneven_core::infrastructure::security::execute_safe_command;
+
+fn build_ui_cmd_approval(mut state: Signal<AppState>) -> (CmdApprovalFn, dioxus::core::Task) {
+    let (req_tx, mut req_rx) =
+        tokio::sync::mpsc::unbounded_channel::<(String, std::sync::mpsc::Sender<bool>)>();
+
+    let collector = spawn(async move {
+        while let Some((cmd, resp_tx)) = req_rx.recv().await {
+            state.write().pending_cmd_approval = Some(PendingCmdApproval {
+                command: cmd,
+                responder: std::sync::Arc::new(std::sync::Mutex::new(Some(resp_tx))),
+            });
+        }
+        state.write().pending_cmd_approval = None;
+    });
+
+    let cb: CmdApprovalFn = std::sync::Arc::new(move |cmd: &str| {
+        let (resp_tx, resp_rx) = std::sync::mpsc::channel();
+        if req_tx.send((cmd.to_string(), resp_tx)).is_err() {
+            return false;
+        }
+        resp_rx.recv().unwrap_or(false)
+    });
+
+    (cb, collector)
+}
+
+fn resolve_pending_cmd(mut state: Signal<AppState>, approved: bool) {
+    if let Some(pending) = state.write().pending_cmd_approval.take()
+        && let Ok(mut guard) = pending.responder.lock()
+        && let Some(tx) = guard.take()
+    {
+        let _ = tx.send(approved);
+    }
+}
 
 fn submit_prompt(
     mut state: Signal<AppState>,
@@ -818,7 +852,8 @@ fn submit_prompt(
                     });
                     let _ = uneven_core::infrastructure::llm::history_manager::save_history_to_disk(&history_turns, &sess_id, &root);
                 } else {
-                    let ask_res = execute_ask_with_system(
+                    let (cmd_cb, cmd_collector) = build_ui_cmd_approval(state);
+                    let ask_res = execute_ask_with_options(
                         &effective_task_to_run,
                         &files_to_run,
                         &config,
@@ -827,8 +862,11 @@ fn submit_prompt(
                         None,
                         Some(&mut history_turns),
                         pod_ask_override.as_deref(),
+                        Some(cmd_cb),
                     )
                     .await;
+                    cmd_collector.cancel();
+                    state.write().pending_cmd_approval = None;
 
                     if let Ok(result) = ask_res {
                         let _ = uneven_core::infrastructure::llm::history_manager::save_history_to_disk(&history_turns, &sess_id, &root);
@@ -1008,7 +1046,8 @@ fn submit_prompt(
                         let _ = phase_tx.try_send(phase);
                     };
 
-                    let think_res = execute_thought_loop_with_history(
+                    let (cmd_cb, cmd_collector) = build_ui_cmd_approval(state);
+                    let think_res = execute_thought_loop_with_options(
                         &effective_task_to_run,
                         &files_to_run,
                         &config,
@@ -1018,9 +1057,12 @@ fn submit_prompt(
                         Some(on_phase),
                         pod_think_override.as_deref(),
                         Some(&history_turns),
+                        Some(cmd_cb),
                     )
                     .await;
 
+                    cmd_collector.cancel();
+                    state.write().pending_cmd_approval = None;
                     phase_collector.cancel();
                     state.write().thought_phase = None;
 
@@ -1401,6 +1443,29 @@ pub fn PromptInput() -> Element {
                 div { class: "flex items-center justify-between gap-2 px-3 py-1.5 mb-2 text-xs font-mono rounded-lg bg-rose-950/60 border border-rose-800 text-rose-300",
                     span { "Prompt length ({char_count}/{max_chars}) exceeds limit. Please use '+' to attach files." }
                     span { class: "text-rose-400 font-bold shrink-0", "+{char_count - max_chars} chars" }
+                }
+            }
+
+            // Scrollable Command Approval Box (when an active stage requests [EXEC_CMD])
+            if let Some(pending_cmd) = state.read().pending_cmd_approval.clone() {
+                div { class: "mb-2 p-2 rounded-lg bg-[#121212] border border-[#2a2a2a] flex flex-col gap-2",
+                    textarea {
+                        class: "w-full h-24 bg-[#0c0c0c] border border-[#242424] rounded-md p-2 text-xs font-mono text-neutral-200 resize-none focus:outline-none overflow-y-auto",
+                        readonly: true,
+                        value: "{pending_cmd.command}",
+                    }
+                    div { class: "flex items-center justify-end gap-2",
+                        button {
+                            class: "px-3 py-1 rounded-md text-xs font-medium bg-[#1d1d1d] hover:bg-[#272727] border border-[#303030] text-neutral-300 cursor-pointer transition-colors",
+                            onclick: move |_| resolve_pending_cmd(state, false),
+                            "Cancel"
+                        }
+                        button {
+                            class: "px-3 py-1 rounded-md text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer transition-colors",
+                            onclick: move |_| resolve_pending_cmd(state, true),
+                            "OK"
+                        }
+                    }
                 }
             }
 
