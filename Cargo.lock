@@ -1234,6 +1234,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "catfive"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b26030e6b4e1b1312dc3e202c1095f68d480f91e8a32c8065f414fc38aad3975"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "cbc"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8836,7 +8845,7 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41940166c6d0d3a3d82a0833371bb976b99bcbc25f0c8eea22c86aafe6000ac2"
 dependencies = [
- "catfive",
+ "catfive 0.2.0",
  "regex",
  "serde",
  "serde_json",
@@ -10315,7 +10324,7 @@ version = "2.5.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "catfive",
+ "catfive 0.3.0",
  "chrono",
  "clap",
  "console 0.15.11",
@@ -10349,7 +10358,7 @@ dependencies = [
  "candle-core",
  "candle-nn",
  "candle-transformers",
- "catfive",
+ "catfive 0.3.0",
  "chrono",
  "contextcraft",
  "csv",
@@ -10400,7 +10409,7 @@ dependencies = [
 name = "uneven-ui"
 version = "0.2.4"
 dependencies = [
- "catfive",
+ "catfive 0.3.0",
  "dioxus",
  "rfd 0.15.4",
  "serde",

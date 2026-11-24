@@ -14,7 +14,7 @@ crate-type = ["rlib"]
 tokio = { version = "1.54.1", features = ["full"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-catfive = { version = "0.2.0", features = ["serde"] }
+catfive = { version = "0.3.0", features = ["serde"] }
 postcard = { version = "1.1", features = ["use-std"] }
 thiserror = "2.0.21"
 anyhow = "1.0.104"
