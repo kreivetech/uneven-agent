@@ -25,26 +25,41 @@ pub fn generate_multi_dashboard(
 
     let primary_dataset_name = datasets.keys().next().cloned().unwrap_or_else(|| "main".to_string());
 
-    // Tab 1: Executive Overview
-    tab_buttons.push(format!(
-        r#"<button onclick="switchTab('tab-overview')" data-tab-btn="tab-overview" class="tab-btn active px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"><iconify-icon icon="lucide:layout-dashboard" class="text-sm"></iconify-icon>Executive Overview</button>"#
-    ));
+    // Tab 1..N: Fixed-Viewport Analytics Pages (max 4 charts per tab)
+    let overview_pages = build_overview_pages(datasets, &primary_dataset_name, visual_suggestions, theme);
+    for (idx, (tab_title, page_html)) in overview_pages.into_iter().enumerate() {
+        let tab_id = if idx == 0 {
+            "tab-overview".to_string()
+        } else {
+            format!("tab-page-{}", idx + 1)
+        };
+        let is_first = idx == 0;
+        let btn_class = if is_first {
+            "tab-btn active px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0"
+        } else {
+            "tab-btn px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer text-neutral-400 hover:text-white border border-transparent shrink-0"
+        };
+        let icon = if is_first { "lucide:layout-dashboard" } else { "lucide:bar-chart-2" };
+        tab_buttons.push(format!(
+            r#"<button onclick="switchTab('{}')" data-tab-btn="{}" class="{}"><iconify-icon icon="{}" class="text-sm"></iconify-icon>{}</button>"#,
+            tab_id, tab_id, btn_class, icon, esc(&tab_title)
+        ));
+        let hidden_cls = if is_first { "" } else { " hidden" };
+        tab_contents.push(format!(
+            r#"<section id="{}" class="tab-pane canvas-tab{}">{}</section>"#,
+            tab_id, hidden_cls, page_html
+        ));
+    }
 
-    let overview_html = render_overview_tab(datasets, &primary_dataset_name, visual_suggestions, theme);
-    tab_contents.push(format!(
-        r#"<section id="tab-overview" class="tab-pane flex flex-col gap-6">{}</section>"#,
-        overview_html
-    ));
-
-    // Tab 2: Data Explorer (Multi-table support)
+    // Last Tab: Data Explorer (Multi-table support, scrollable)
     tab_buttons.push(format!(
-        r#"<button onclick="switchTab('tab-explorer')" data-tab-btn="tab-explorer" class="tab-btn px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer text-neutral-400 hover:text-white border border-transparent"><iconify-icon icon="lucide:database" class="text-sm"></iconify-icon>Data Explorer ({} tables)</button>"#,
+        r#"<button onclick="switchTab('tab-explorer')" data-tab-btn="tab-explorer" class="tab-btn px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer text-neutral-400 hover:text-white border border-transparent shrink-0"><iconify-icon icon="lucide:database" class="text-sm"></iconify-icon>Data Explorer ({} tables)</button>"#,
         datasets.len()
     ));
 
     let explorer_html = render_multi_table_explorer(datasets);
     tab_contents.push(format!(
-        r#"<section id="tab-explorer" class="tab-pane hidden flex flex-col gap-6">{}</section>"#,
+        r#"<section id="tab-explorer" class="tab-pane scroll-tab hidden flex flex-col gap-6">{}</section>"#,
         explorer_html
     ));
 
@@ -101,7 +116,7 @@ pub fn generate_multi_dashboard(
     </nav>
 
     <!-- Tab Sections Container -->
-    <main class="flex-1 flex flex-col gap-6">
+    <main class="dashboard-main">
       {}
     </main>
   </div>
@@ -122,6 +137,8 @@ pub fn generate_multi_dashboard(
         targetBtn.classList.remove('text-neutral-400', 'border-transparent');
         targetBtn.classList.add('bg-emerald-500/10', 'text-emerald-400', 'border-emerald-500/20');
       }}
+
+      setTimeout(() => window.dispatchEvent(new Event('resize')), 30);
     }}
 
     // Table search filter
@@ -182,8 +199,6 @@ struct ChartOverride {
     chart_type: Option<String>,
     title: Option<String>,
     subtitle: Option<String>,
-    span: Option<usize>,
-    height: Option<usize>,
 }
 
 fn parse_layout_items(visual_suggestions: Option<&serde_json::Value>) -> Option<&Vec<serde_json::Value>> {
@@ -205,8 +220,6 @@ fn extract_chart_override(visual_suggestions: Option<&serde_json::Value>) -> Cha
         chart_type: None,
         title: None,
         subtitle: None,
-        span: None,
-        height: None,
     };
     let Some(obj) = visual_suggestions.and_then(|v| v.as_object()) else {
         return empty;
@@ -215,8 +228,6 @@ fn extract_chart_override(visual_suggestions: Option<&serde_json::Value>) -> Cha
         chart_type: obj.get("chartType").or_else(|| obj.get("chart_type")).and_then(|v| v.as_str()).map(String::from),
         title: obj.get("title").and_then(|v| v.as_str()).map(String::from),
         subtitle: obj.get("subtitle").and_then(|v| v.as_str()).map(String::from),
-        span: obj.get("span").and_then(|v| v.as_u64()).map(|n| (n as usize).clamp(3, 12)),
-        height: obj.get("height").and_then(|v| v.as_u64()).map(|n| (n as usize).clamp(280, 720)),
     }
 }
 
@@ -276,21 +287,6 @@ fn should_use_horizontal_bars(chart_type: &str, labels: &[String]) -> bool {
             || (labels.len() > 6 && labels.iter().any(|l| l.chars().count() > 18)))
 }
 
-fn compute_chart_height(
-    chart_type: &str,
-    row_count: usize,
-    is_horizontal: bool,
-    override_height: Option<usize>,
-) -> usize {
-    if let Some(h) = override_height {
-        return h;
-    }
-    if is_horizontal && chart_type == "bar" {
-        return (row_count * 32 + 96).clamp(360, 640);
-    }
-    360
-}
-
 fn aggregate_top_n_pie(labels: Vec<String>, values: Vec<f64>, limit: usize) -> (Vec<String>, Vec<f64>) {
     let mut pairs: Vec<(String, f64)> = labels.into_iter().zip(values).collect();
     if pairs.len() <= limit {
@@ -305,243 +301,342 @@ fn aggregate_top_n_pie(labels: Vec<String>, values: Vec<f64>, limit: usize) -> (
     top.into_iter().unzip()
 }
 
-fn render_explanation_card(text: &str, span: usize) -> String {
-    format!(
-        r#"<div class="bento-card col-{}">
-  <div class="flex items-center gap-2 mb-2">
-    <div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 text-xs shrink-0">
-      <iconify-icon icon="lucide:sparkles"></iconify-icon>
-    </div>
-    <h3 class="text-sm font-semibold text-neutral-200 tracking-tight font-sans">Analysis Insights</h3>
-  </div>
-  <p class="text-xs text-neutral-300 leading-relaxed whitespace-pre-line">{}</p>
-</div>"#,
-        span,
-        esc(text)
-    )
+const MAX_KPIS_PER_TAB: usize = 5;
+const MAX_CHARTS_PER_TAB: usize = 3;
+
+struct CanvasChartSpec {
+    dataset: String,
+    x_col: String,
+    y_cols: Vec<String>,
+    chart_type: String,
+    title: String,
+    subtitle: String,
+    colors: Option<Vec<String>>,
 }
 
-fn render_spec_component(
-    item: &serde_json::Value,
+fn is_radial_chart(chart_type: &str) -> bool {
+    matches!(chart_type, "donut" | "pie" | "radialbar")
+}
+
+fn layout_charts_for_page(
+    chunk: &[CanvasChartSpec],
+    datasets: &HashMap<String, Vec<serde_json::Value>>,
+    primary_dataset_name: &str,
+    theme: &str,
+) -> String {
+    let render_spec = |spec: &CanvasChartSpec, slot_class: &str| {
+        let rows = datasets
+            .get(&spec.dataset)
+            .or_else(|| datasets.get(primary_dataset_name))
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        render_chart(
+            rows,
+            &spec.x_col,
+            &spec.y_cols,
+            &spec.chart_type,
+            &spec.title,
+            &spec.subtitle,
+            slot_class,
+            theme,
+            spec.colors.as_deref(),
+        )
+    };
+
+    match chunk.len() {
+        0 => String::new(),
+        1 => format!(
+            r#"<div class="chart-canvas layout-1">{}</div>"#,
+            render_spec(&chunk[0], "")
+        ),
+        2 => {
+            let p0 = is_radial_chart(&chunk[0].chart_type);
+            let p1 = is_radial_chart(&chunk[1].chart_type);
+            let cls = if p1 && !p0 {
+                "layout-2-pie-right"
+            } else if p0 && !p1 {
+                "layout-2-pie-left"
+            } else {
+                "layout-2"
+            };
+            format!(
+                r#"<div class="chart-canvas {}">{}{}</div>"#,
+                cls,
+                render_spec(&chunk[0], ""),
+                render_spec(&chunk[1], "")
+            )
+        }
+        _ => {
+            if let Some(pie_idx) = chunk.iter().position(|c| is_radial_chart(&c.chart_type)) {
+                let mut cards = Vec::with_capacity(3);
+                for (idx, spec) in chunk.iter().enumerate() {
+                    if idx != pie_idx {
+                        cards.push(render_spec(spec, ""));
+                    }
+                }
+                cards.push(render_spec(&chunk[pie_idx], "slot-tall"));
+                format!(
+                    r#"<div class="chart-canvas layout-3-l">{}</div>"#,
+                    cards.join("\n")
+                )
+            } else {
+                format!(
+                    r#"<div class="chart-canvas layout-3-stack">{}{}{}</div>"#,
+                    render_spec(&chunk[0], ""),
+                    render_spec(&chunk[1], ""),
+                    render_spec(&chunk[2], "slot-wide")
+                )
+            }
+        }
+    }
+}
+
+fn collect_spec_items(
+    items: &[serde_json::Value],
     datasets: &HashMap<String, Vec<serde_json::Value>>,
     default_dataset: &str,
-    theme: &str,
-) -> Option<String> {
-    let obj = item.as_object()?;
-    let comp_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("chart").to_lowercase();
-    let span = obj.get("span").and_then(|v| v.as_u64()).map(|n| (n as usize).clamp(3, 12));
+) -> (Vec<String>, Vec<CanvasChartSpec>) {
+    let mut kpis = Vec::new();
+    let mut charts = Vec::new();
 
-    if comp_type == "explanation" {
-        let text = obj.get("text").and_then(|v| v.as_str()).unwrap_or("");
-        return Some(render_explanation_card(text, span.unwrap_or(12)));
+    for item in items {
+        let Some(root_obj) = item.as_object() else { continue };
+        let comp_type = root_obj.get("type").and_then(|v| v.as_str()).unwrap_or("chart").to_lowercase();
+        let cfg = root_obj.get("config").and_then(|v| v.as_object()).unwrap_or(root_obj);
+
+        if comp_type == "explanation" || comp_type == "table" {
+            continue;
+        }
+
+        let ds_name = cfg.get("dataset")
+            .or_else(|| root_obj.get("dataset"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(default_dataset);
+        let Some(rows) = datasets.get(ds_name).or_else(|| datasets.get(default_dataset)) else { continue };
+        if rows.is_empty() {
+            continue;
+        }
+
+        if comp_type == "kpi" || comp_type == "card" {
+            if kpis.len() >= MAX_KPIS_PER_TAB {
+                continue;
+            }
+            let Some(metric) = cfg.get("metric").or_else(|| cfg.get("metricCol")).and_then(|v| v.as_str()) else { continue };
+            let label = cfg.get("label")
+                .or_else(|| cfg.get("title"))
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .unwrap_or_else(|| humanize_identifier(metric));
+            let sum = sum_numeric_column(rows, metric);
+            let formatted = format_report_value(&serde_json::json!(sum), metric);
+            let icon = cfg.get("icon").and_then(|v| v.as_str()).unwrap_or("lucide:trending-up");
+            let icon_name = if icon.contains(':') { icon.to_string() } else { format!("lucide:{}", icon) };
+            kpis.push(render_kpi_card(&label, &formatted, "", &icon_name, "#10b981", 3));
+            continue;
+        }
+
+        let (columns, numeric_cols, text_cols, date_cols) = infer_columns(rows);
+        let Some(fallback_x) = date_cols.first().or_else(|| text_cols.first()).or_else(|| columns.first()).cloned() else { continue };
+        let x_col = cfg.get("x")
+            .or_else(|| cfg.get("labelCol"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&fallback_x)
+            .to_string();
+
+        let fallback_y: Vec<String> = numeric_cols.first().cloned().into_iter().collect();
+        let y_cols = match cfg.get("valueCols") {
+            Some(serde_json::Value::Array(arr)) => {
+                let cols: Vec<String> = arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+                if cols.is_empty() { extract_y_cols(cfg, &fallback_y) } else { cols }
+            }
+            _ => extract_y_cols(cfg, &fallback_y),
+        };
+        if y_cols.is_empty() {
+            continue;
+        }
+
+        let chart_type = cfg.get("chartType")
+            .or_else(|| cfg.get("chart_type"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("bar")
+            .to_lowercase();
+        let title = cfg.get("title")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .unwrap_or_else(|| format!("{} Overview", humanize_identifier(&y_cols[0])));
+        let subtitle = cfg.get("subtitle")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .unwrap_or_else(|| "Configured visualization".to_string());
+        let colors: Option<Vec<String>> = cfg.get("colors")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|c| c.as_str().map(String::from)).collect())
+            .filter(|v: &Vec<String>| !v.is_empty());
+
+        charts.push(CanvasChartSpec {
+            dataset: ds_name.to_string(),
+            x_col,
+            y_cols,
+            chart_type,
+            title,
+            subtitle,
+            colors,
+        });
     }
 
-    let ds_name = obj.get("dataset").and_then(|v| v.as_str()).unwrap_or(default_dataset);
-    let rows = datasets.get(ds_name).or_else(|| datasets.get(default_dataset))?;
-    if rows.is_empty() {
-        return None;
-    }
-
-    if comp_type == "kpi" {
-        let metric = obj.get("metric").and_then(|v| v.as_str())?;
-        let label = obj.get("label").and_then(|v| v.as_str()).map(String::from).unwrap_or_else(|| humanize_identifier(metric));
-        let sum = sum_numeric_column(rows, metric);
-        let formatted = format_report_value(&serde_json::json!(sum), metric);
-        let icon = obj.get("icon").and_then(|v| v.as_str()).unwrap_or("lucide:trending-up");
-        return Some(render_kpi_card(&label, &formatted, "Configured Metric", icon, "#10b981", span.unwrap_or(3)));
-    }
-
-    if comp_type == "table" {
-        let title = obj.get("title").and_then(|v| v.as_str()).unwrap_or(ds_name);
-        let limit = obj.get("pagination").and_then(|v| v.as_u64()).unwrap_or(15) as usize;
-        return Some(render_dataset_table_card(title, rows, span.unwrap_or(12), limit));
-    }
-
-    let (columns, numeric_cols, text_cols, date_cols) = infer_columns(rows);
-    let fallback_x = date_cols.first().or_else(|| text_cols.first()).or_else(|| columns.first())?.clone();
-    let x_col = obj.get("x").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).unwrap_or(&fallback_x);
-    let fallback_y: Vec<String> = numeric_cols.first().cloned().into_iter().collect();
-    let y_cols = extract_y_cols(obj, &fallback_y);
-    if y_cols.is_empty() {
-        return None;
-    }
-
-    let chart_type = obj.get("chartType").or_else(|| obj.get("chart_type")).and_then(|v| v.as_str()).unwrap_or("bar");
-    let default_title = format!("{} Overview", humanize_identifier(&y_cols[0]));
-    let title = obj.get("title").and_then(|v| v.as_str()).unwrap_or(&default_title);
-    let subtitle = obj.get("subtitle").and_then(|v| v.as_str()).unwrap_or("Configured visualization");
-    let height = obj.get("height").and_then(|v| v.as_u64()).map(|n| (n as usize).clamp(280, 720)).unwrap_or(0);
-    let colors: Option<Vec<String>> = obj.get("colors").and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|c| c.as_str().map(String::from)).collect())
-        .filter(|v: &Vec<String>| !v.is_empty());
-
-    Some(render_chart(
-        rows,
-        x_col,
-        &y_cols,
-        chart_type,
-        title,
-        subtitle,
-        span.unwrap_or(6),
-        height,
-        theme,
-        colors.as_deref(),
-    ))
+    (kpis, charts)
 }
 
-fn render_overview_tab(
+fn paginate_charts_into_tabs(
+    kpis: &[String],
+    charts: &[CanvasChartSpec],
+    datasets: &HashMap<String, Vec<serde_json::Value>>,
+    primary_dataset_name: &str,
+    theme: &str,
+) -> Vec<(String, String)> {
+    let kpi_count = kpis.len().min(MAX_KPIS_PER_TAB);
+    let kpi_strip = if kpi_count > 0 {
+        format!(
+            r#"<div class="kpi-strip" style="grid-template-columns: repeat({}, minmax(0, 1fr));">{}</div>"#,
+            kpi_count,
+            kpis.iter().take(kpi_count).cloned().collect::<Vec<_>>().join("\n")
+        )
+    } else {
+        String::new()
+    };
+
+    if charts.is_empty() {
+        return vec![("Executive Overview".to_string(), kpi_strip)];
+    }
+
+    let mut pages = Vec::new();
+    for (page_idx, chunk) in charts.chunks(MAX_CHARTS_PER_TAB).enumerate() {
+        let canvas_html = layout_charts_for_page(chunk, datasets, primary_dataset_name, theme);
+        let (tab_title, page_body) = if page_idx == 0 {
+            ("Executive Overview".to_string(), format!("{}{}", kpi_strip, canvas_html))
+        } else {
+            (format!("Analytics Page {}", page_idx + 1), canvas_html)
+        };
+        pages.push((tab_title, page_body));
+    }
+    pages
+}
+
+fn build_overview_pages(
     datasets: &HashMap<String, Vec<serde_json::Value>>,
     primary_dataset_name: &str,
     visual_suggestions: Option<&serde_json::Value>,
     theme: &str,
-) -> String {
+) -> Vec<(String, String)> {
     let rows = datasets.get(primary_dataset_name).map(|v| v.as_slice()).unwrap_or(&[]);
     if rows.is_empty() {
-        return "<div class='p-8 text-center text-neutral-400'>No records returned.</div>".to_string();
+        return vec![("Executive Overview".to_string(), "<div class='p-8 text-center text-neutral-400'>No records returned.</div>".to_string())];
     }
 
-    // Explicit multi-component DashboardSpec / layout mode
     if let Some(items) = parse_layout_items(visual_suggestions) {
-        let rendered: Vec<String> = items
-            .iter()
-            .filter_map(|item| render_spec_component(item, datasets, primary_dataset_name, theme))
-            .collect();
-        if !rendered.is_empty() {
-            return format!(r#"<div class="bento-grid">{}</div>"#, rendered.join("\n"));
+        let (kpis, charts) = collect_spec_items(items, datasets, primary_dataset_name);
+        if !kpis.is_empty() || !charts.is_empty() {
+            return paginate_charts_into_tabs(&kpis, &charts, datasets, primary_dataset_name, theme);
         }
     }
 
     let (columns, numeric_cols, text_cols, date_cols) = infer_columns(rows);
 
-    // 1. KPI Cards Row
     let mut kpis_html = Vec::new();
     kpis_html.push(render_kpi_card(
         "Total Volume",
         &rows.len().to_string(),
-        "Aggregated Records",
+        "",
         "lucide:layers",
         "#10b981",
         3,
     ));
 
-    for (idx, col) in numeric_cols.iter().take(3).enumerate() {
+    for (idx, col) in numeric_cols.iter().take(4).enumerate() {
         let sum = sum_numeric_column(rows, col);
-        let colors = ["#06b6d4", "#8b5cf6", "#f59e0b"];
+        let colors = ["#06b6d4", "#8b5cf6", "#f59e0b", "#ec4899"];
         let color = colors[idx % colors.len()];
-        let icons = ["lucide:trending-up", "lucide:dollar-sign", "lucide:activity"];
+        let icons = ["lucide:trending-up", "lucide:dollar-sign", "lucide:activity", "lucide:hash"];
         let icon = icons[idx % icons.len()];
         let formatted = format_report_value(&serde_json::json!(sum), col);
 
         kpis_html.push(render_kpi_card(
             &humanize_identifier(col),
             &formatted,
-            "Calculated Metric",
+            "",
             icon,
             color,
             3,
         ));
     }
 
-    // 2. Smart Automatic Multi-Chart Bento Layout
-    let mut charts_html = Vec::new();
+    let mut charts: Vec<CanvasChartSpec> = Vec::new();
     if !numeric_cols.is_empty() {
         let primary_metric = &numeric_cols[0];
         let override_spec = extract_chart_override(visual_suggestions);
 
         if let Some(date_col) = date_cols.first() {
             let trend_metrics: Vec<String> = numeric_cols.iter().take(2).cloned().collect();
-            let trend_type = override_spec.chart_type.as_deref().unwrap_or(if trend_metrics.len() > 1 { "line" } else { "area" });
-            let trend_span = override_spec.span.unwrap_or(if text_cols.is_empty() { 12 } else { 8 });
-            charts_html.push(render_chart(
-                rows,
-                date_col,
-                &trend_metrics,
-                trend_type,
-                override_spec.title.as_deref().unwrap_or(&format!("{} Trend", humanize_identifier(primary_metric))),
-                override_spec.subtitle.as_deref().unwrap_or("Time-series progression"),
-                trend_span,
-                override_spec.height.unwrap_or(0),
-                theme,
-                None,
-            ));
+            let trend_type = override_spec.chart_type.unwrap_or_else(|| if trend_metrics.len() > 1 { "line".to_string() } else { "area".to_string() });
+            charts.push(CanvasChartSpec {
+                dataset: primary_dataset_name.to_string(),
+                x_col: date_col.clone(),
+                y_cols: trend_metrics,
+                chart_type: trend_type,
+                title: override_spec.title.unwrap_or_else(|| format!("{} Trend", humanize_identifier(primary_metric))),
+                subtitle: override_spec.subtitle.unwrap_or_else(|| "Time-series progression".to_string()),
+                colors: None,
+            });
 
             if let Some(cat_col) = text_cols.first() {
-                charts_html.push(render_chart(
-                    rows,
-                    cat_col,
-                    &[primary_metric.clone()],
-                    "donut",
-                    "Proportional Share",
-                    "Relative contribution ratio (Top 6)",
-                    4,
-                    360,
-                    theme,
-                    None,
-                ));
+                charts.push(CanvasChartSpec {
+                    dataset: primary_dataset_name.to_string(),
+                    x_col: cat_col.clone(),
+                    y_cols: vec![primary_metric.clone()],
+                    chart_type: "donut".to_string(),
+                    title: "Proportional Share".to_string(),
+                    subtitle: "Relative contribution ratio (Top 6)".to_string(),
+                    colors: None,
+                });
             }
         } else if let Some(label_col) = text_cols.first().or_else(|| columns.first()) {
-            let primary_type = override_spec.chart_type.as_deref().unwrap_or("bar");
-            charts_html.push(render_chart(
-                rows,
-                label_col,
-                &[primary_metric.clone()],
-                primary_type,
-                override_spec.title.as_deref().unwrap_or(&format!("{} Breakdown", humanize_identifier(primary_metric))),
-                override_spec.subtitle.as_deref().unwrap_or("Ranked distribution across primary dimensions"),
-                override_spec.span.unwrap_or(8),
-                override_spec.height.unwrap_or(0),
-                theme,
-                None,
-            ));
-
-            charts_html.push(render_chart(
-                rows,
-                label_col,
-                &[primary_metric.clone()],
-                "donut",
-                "Proportional Share",
-                "Relative contribution ratio (Top 6)",
-                4,
-                360,
-                theme,
-                None,
-            ));
+            let primary_type = override_spec.chart_type.unwrap_or_else(|| "bar".to_string());
+            charts.push(CanvasChartSpec {
+                dataset: primary_dataset_name.to_string(),
+                x_col: label_col.clone(),
+                y_cols: vec![primary_metric.clone()],
+                chart_type: primary_type,
+                title: override_spec.title.unwrap_or_else(|| format!("{} Breakdown", humanize_identifier(primary_metric))),
+                subtitle: override_spec.subtitle.unwrap_or_else(|| "Ranked distribution across primary dimensions".to_string()),
+                colors: None,
+            });
 
             if numeric_cols.len() >= 2 {
                 let comp_metrics: Vec<String> = numeric_cols.iter().take(2).cloned().collect();
-                charts_html.push(render_chart(
-                    rows,
-                    label_col,
-                    &comp_metrics,
-                    "combo",
-                    &format!("{} vs {}", humanize_identifier(&comp_metrics[0]), humanize_identifier(&comp_metrics[1])),
-                    "Multi-metric comparative view",
-                    if numeric_cols.len() >= 3 { 6 } else { 12 },
-                    360,
-                    theme,
-                    None,
-                ));
+                charts.push(CanvasChartSpec {
+                    dataset: primary_dataset_name.to_string(),
+                    x_col: label_col.clone(),
+                    y_cols: comp_metrics.clone(),
+                    chart_type: "combo".to_string(),
+                    title: format!("{} vs {}", humanize_identifier(&comp_metrics[0]), humanize_identifier(&comp_metrics[1])),
+                    subtitle: "Multi-metric comparative view".to_string(),
+                    colors: None,
+                });
             }
 
-            if numeric_cols.len() >= 3 {
-                let third_metric = &numeric_cols[2];
-                charts_html.push(render_chart(
-                    rows,
-                    label_col,
-                    &[third_metric.clone()],
-                    "line",
-                    &format!("{} Distribution", humanize_identifier(third_metric)),
-                    "Secondary metric trend",
-                    6,
-                    360,
-                    theme,
-                    None,
-                ));
-            }
+            charts.push(CanvasChartSpec {
+                dataset: primary_dataset_name.to_string(),
+                x_col: label_col.clone(),
+                y_cols: vec![primary_metric.clone()],
+                chart_type: "donut".to_string(),
+                title: "Proportional Share".to_string(),
+                subtitle: "Relative contribution ratio (Top 6)".to_string(),
+                colors: None,
+            });
         }
     }
 
-    // Include secondary dataset summary chart when multi-dataset is present
     for (ds_name, ds_rows) in datasets {
         if ds_name == primary_dataset_name || ds_rows.is_empty() {
             continue;
@@ -550,59 +645,46 @@ fn render_overview_tab(
         if let Some(metric) = ds_num.first() {
             if let Some(x_col) = ds_date.first().or_else(|| ds_text.first()).or_else(|| ds_cols.first()) {
                 let ctype = if !ds_date.is_empty() { "area" } else { "bar" };
-                charts_html.push(render_chart(
-                    ds_rows,
-                    x_col,
-                    &[metric.clone()],
-                    ctype,
-                    &format!("{}: {}", humanize_identifier(ds_name), humanize_identifier(metric)),
-                    "Secondary dataset overview",
-                    6,
-                    360,
-                    theme,
-                    None,
-                ));
+                charts.push(CanvasChartSpec {
+                    dataset: ds_name.clone(),
+                    x_col: x_col.clone(),
+                    y_cols: vec![metric.clone()],
+                    chart_type: ctype.to_string(),
+                    title: format!("{}: {}", humanize_identifier(ds_name), humanize_identifier(metric)),
+                    subtitle: "Secondary dataset overview".to_string(),
+                    colors: None,
+                });
             }
         }
     }
 
-    format!(
-        r#"<div class="bento-grid">
-  {}
-  {}
-</div>"#,
-        kpis_html.join("\n"),
-        charts_html.join("\n")
-    )
+    paginate_charts_into_tabs(&kpis_html, &charts, datasets, primary_dataset_name, theme)
 }
 
 fn render_kpi_card(
     title: &str,
     value: &str,
-    subtitle: &str,
+    _subtitle: &str,
     icon: &str,
     accent_color: &str,
-    span: usize,
+    _span: usize,
 ) -> String {
     format!(
-        r#"<div class="bento-card col-{} relative overflow-hidden group">
-  <div class="flex items-center justify-between mb-3">
-    <span class="text-xs font-semibold text-neutral-400 font-sans tracking-wide">{}</span>
-    <div class="w-8 h-8 rounded-lg flex items-center justify-center text-sm shadow-sm" style="background-color: {}15; color: {}; border: 1px solid {}30;">
+        r#"<div class="bento-card kpi-card relative overflow-hidden group">
+  <div class="flex items-center justify-between mb-1.5">
+    <span class="text-[11px] font-semibold text-neutral-400 font-sans tracking-wide truncate">{}</span>
+    <div class="w-6 h-6 rounded-lg flex items-center justify-center text-xs shadow-sm shrink-0" style="background-color: {}15; color: {}; border: 1px solid {}30;">
       <iconify-icon icon="{}"></iconify-icon>
     </div>
   </div>
-  <div class="text-2xl font-bold text-neutral-100 tracking-tight font-sans">{}</div>
-  <div class="text-[11px] text-neutral-500 font-mono mt-1">{}</div>
+  <div class="text-xl font-bold text-neutral-100 tracking-tight font-sans truncate">{}</div>
 </div>"#,
-        span,
         esc(title),
         accent_color,
         accent_color,
         accent_color,
         icon,
-        esc(value),
-        esc(subtitle)
+        esc(value)
     )
 }
 
@@ -631,8 +713,7 @@ fn render_chart(
     chart_type: &str,
     title: &str,
     subtitle: &str,
-    span: usize,
-    height: usize,
+    slot_class: &str,
     theme: &str,
     custom_colors: Option<&[String]>,
 ) -> String {
@@ -648,24 +729,50 @@ fn render_chart(
     let apex_type = if is_combo { "line" } else { chart_type };
     let is_dark = theme != "light";
     let axis_color = if is_dark { "#9ca3af" } else { "#475569" };
-    let is_horizontal = !is_pie && !is_combo && should_use_horizontal_bars(chart_type, &raw_labels);
-    let effective_height = compute_chart_height(
-        chart_type,
-        raw_labels.len(),
-        is_horizontal,
-        if height > 0 { Some(height) } else { None },
-    );
+
+    // Keep bar charts bounded to Top 8 (+ Others for single series) so cards fit inside 100vh
+    let (capped_labels, capped_rows): (Vec<String>, Vec<usize>) = if chart_type == "bar" && raw_labels.len() > 8 && value_cols.len() == 1 {
+        let raw_vals = extract_numeric_series(rows, primary_col);
+        let (top_l, _top_v) = aggregate_top_n_pie(raw_labels.clone(), raw_vals, 8);
+        (top_l, Vec::new())
+    } else {
+        let indices: Vec<usize> = (0..raw_labels.len().min(12)).collect();
+        (indices.iter().map(|&i| raw_labels[i].clone()).collect(), indices)
+    };
+
+    let is_horizontal = !is_pie && !is_combo && should_use_horizontal_bars(chart_type, &capped_labels);
 
     let (labels, series_json, xaxis_json) = if is_pie {
         let raw_values = extract_numeric_series(rows, primary_col);
         let (pie_labels, pie_values) = aggregate_top_n_pie(raw_labels, raw_values, 6);
         (pie_labels, serde_json::json!(pie_values), serde_json::json!({}))
+    } else if chart_type == "bar" && raw_labels.len() > 8 && value_cols.len() == 1 {
+        let raw_vals = extract_numeric_series(rows, primary_col);
+        let (bar_labels, bar_values) = aggregate_top_n_pie(raw_labels, raw_vals, 8);
+        let rotate_angle = if !is_horizontal && bar_labels.len() > 6 { -30 } else { 0 };
+        let xaxis = serde_json::json!({
+            "categories": bar_labels,
+            "axisBorder": { "show": false },
+            "axisTicks": { "show": false },
+            "labels": {
+                "trim": true,
+                "rotate": rotate_angle,
+                "style": { "colors": axis_color, "fontSize": "11px" }
+            }
+        });
+        let series = serde_json::json!([{ "name": humanize_identifier(primary_col), "data": bar_values }]);
+        (bar_labels, series, xaxis)
     } else {
         let series_items: Vec<serde_json::Value> = value_cols
             .iter()
             .enumerate()
             .map(|(idx, col)| {
-                let data = extract_numeric_series(rows, col);
+                let full_data = extract_numeric_series(rows, col);
+                let data: Vec<f64> = if capped_rows.is_empty() {
+                    full_data
+                } else {
+                    capped_rows.iter().map(|&i| full_data[i]).collect()
+                };
                 if is_combo {
                     serde_json::json!({
                         "name": humanize_identifier(col),
@@ -680,9 +787,9 @@ fn render_chart(
                 }
             })
             .collect();
-        let rotate_angle = if !is_horizontal && raw_labels.len() > 6 { -35 } else { 0 };
+        let rotate_angle = if !is_horizontal && capped_labels.len() > 6 { -30 } else { 0 };
         let xaxis = serde_json::json!({
-            "categories": raw_labels,
+            "categories": capped_labels,
             "axisBorder": { "show": false },
             "axisTicks": { "show": false },
             "labels": {
@@ -691,7 +798,7 @@ fn render_chart(
                 "style": { "colors": axis_color, "fontSize": "11px" }
             }
         });
-        (raw_labels, serde_json::json!(series_items), xaxis)
+        (capped_labels, serde_json::json!(series_items), xaxis)
     };
 
     let default_colors = vec![
@@ -717,25 +824,48 @@ fn render_chart(
     } else {
         serde_json::json!({ "curve": "smooth", "width": 2 })
     };
+    let yaxis_json = if is_combo && value_cols.len() >= 2 {
+        serde_json::json!([
+            {
+                "title": { "text": humanize_identifier(&value_cols[0]), "style": { "color": axis_color, "fontSize": "10px" } },
+                "labels": { "style": { "colors": axis_color, "fontSize": "10px" } }
+            },
+            {
+                "opposite": true,
+                "title": { "text": humanize_identifier(&value_cols[1]), "style": { "color": axis_color, "fontSize": "10px" } },
+                "labels": { "style": { "colors": axis_color, "fontSize": "10px" } }
+            }
+        ])
+    } else {
+        serde_json::json!({
+            "labels": { "style": { "colors": axis_color, "fontSize": "10px" } }
+        })
+    };
+
+    let card_classes = if slot_class.is_empty() {
+        "bento-card".to_string()
+    } else {
+        format!("bento-card {}", slot_class)
+    };
 
     format!(
-        r#"<div class="bento-card col-{}">
-  <div class="flex items-center justify-between mb-4">
+        r#"<div class="{}">
+  <div class="flex items-center justify-between mb-2 shrink-0">
     <div class="min-w-0">
       <h3 class="text-sm font-semibold text-neutral-200 tracking-tight font-sans truncate">{}</h3>
-      <p class="text-[11px] text-neutral-400 font-mono mt-0.5 truncate">{}</p>
+      <p class="text-[11px] text-neutral-400 font-mono truncate">{}</p>
     </div>
     <div class="w-7 h-7 rounded-lg bg-[#14161f] border border-[#232734] flex items-center justify-center text-neutral-400 text-xs shadow-sm shrink-0">
       <iconify-icon icon="lucide:bar-chart-2"></iconify-icon>
     </div>
   </div>
-  <div id="{}" class="chart-container" style="min-height: {}px;"></div>
+  <div id="{}" class="chart-container"></div>
   <script>
     new ApexCharts(document.getElementById('{}'), {{
       chart: {{
         type: '{}',
         width: '100%',
-        height: {},
+        height: '100%',
         parentHeightOffset: 0,
         redrawOnParentResize: true,
         redrawOnWindowResize: true,
@@ -749,6 +879,7 @@ fn render_chart(
       series: {},
       labels: {:?},
       xaxis: {},
+      yaxis: {},
       fill: {},
       dataLabels: {{ enabled: false }},
       stroke: {},
@@ -766,29 +897,28 @@ fn render_chart(
         strokeDashArray: 4
       }},
       responsive: [{{
-        breakpoint: 768,
+        breakpoint: 1023,
         options: {{
-          chart: {{ height: 320 }},
+          chart: {{ height: 280 }},
           legend: {{ position: 'bottom' }}
         }}
       }}]
     }}).render();
   </script>
 </div>"#,
-        span,
+        card_classes,
         esc(title),
         esc(subtitle),
         chart_id,
-        effective_height,
         chart_id,
         apex_type,
-        effective_height,
         axis_color,
         if is_dark { "dark" } else { "light" },
         colors,
         series_json,
         labels,
         xaxis_json,
+        yaxis_json,
         fill_json,
         stroke_json,
         axis_color,
@@ -920,10 +1050,10 @@ mod tests {
         let html = generate_dashboard(&rows, "Isolated Sizing Test", "dark", Some(&suggestions));
         assert!(html.contains("Revenue by Segment"));
         assert!(html.contains("class=\"chart-container\""));
+        assert!(html.contains("class=\"chart-canvas layout-3-l\""));
+        assert!(html.contains("slot-tall"));
         assert!(html.contains("width: '100%'"));
-        assert!(html.contains("horizontal: true"));
-        assert!(html.contains("height: 544"));
-        assert!(html.contains("height: 360"));
+        assert!(html.contains("height: '100%'"));
         assert!(html.contains("\"Others\""));
 
         if let Ok(out_path) = std::env::var("DASHBOARD_PREVIEW_OUT") {
@@ -943,18 +1073,24 @@ mod tests {
         );
         let spec = serde_json::json!({
             "layout": [
-                { "type": "explanation", "text": "Growth accelerated in February.", "span": 12 },
-                { "type": "chart", "dataset": "trend", "chartType": "combo", "x": "month", "y": ["revenue", "orders"], "title": "Combo View", "span": 6 },
-                { "type": "chart", "dataset": "trend", "chartType": "area", "x": "month", "y": "revenue", "title": "Area View", "span": 6 }
+                { "type": "kpi", "dataset": "trend", "metric": "revenue", "label": "Revenue" },
+                { "type": "kpi", "dataset": "trend", "metric": "orders", "label": "Orders" },
+                { "type": "chart", "dataset": "trend", "chartType": "combo", "x": "month", "y": ["revenue", "orders"], "title": "Combo View" },
+                { "type": "chart", "dataset": "trend", "chartType": "area", "x": "month", "y": "revenue", "title": "Area View" },
+                { "type": "chart", "dataset": "trend", "chartType": "donut", "x": "month", "y": "revenue", "title": "Donut View" },
+                { "type": "chart", "dataset": "trend", "chartType": "line", "x": "month", "y": "orders", "title": "Page 2 Line" }
             ]
         });
 
         let html = generate_multi_dashboard(&datasets, "Multi-Chart Spec", "dark", Some(&spec));
-        assert!(html.contains("Analysis Insights"));
-        assert!(html.contains("Growth accelerated in February."));
         assert!(html.contains("Combo View"));
         assert!(html.contains("Area View"));
+        assert!(html.contains("Donut View"));
+        assert!(html.contains("layout-3-l"));
+        assert!(html.contains("Analytics Page 2"));
+        assert!(html.contains("Page 2 Line"));
         assert!(html.contains("\"type\":\"column\""));
+        assert!(html.contains("\"opposite\":true"));
         assert!(html.contains("toggleTheme()"));
     }
 }
