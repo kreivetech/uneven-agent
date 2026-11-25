@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use crate::infrastructure::utils::formatter::{
-    escape_html as esc, format_report_value, humanize_identifier, is_date_like, is_numeric,
+    escape_html as esc, format_report_value, format_report_value_with_hint, humanize_identifier,
+    is_date_like, is_money_col, is_numeric, normalize_currency,
 };
 
 pub const DASHBOARD_CSS: &str = include_str!("assets/dashboard.css");
@@ -73,6 +74,26 @@ pub fn generate_multi_dashboard(
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
   <script>{}</script>
+  <script>
+    function fmtDashboardVal(val, currencyCode, compact) {{
+      if (val === null || val === undefined || isNaN(val)) return val;
+      if (!currencyCode) {{
+        if (compact && Math.abs(val) >= 1000) return (val / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+        return Number.isInteger(val) ? String(val) : Number(val).toFixed(2);
+      }}
+      const symbols = {{ BRL: 'R$ ', USD: '$ ', EUR: '€ ', GBP: '£ ' }};
+      const sym = symbols[currencyCode] || '$ ';
+      if (compact) {{
+        const abs = Math.abs(val);
+        const sign = val < 0 ? '-' : '';
+        if (abs >= 1e6) return sign + sym + (abs / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+        if (abs >= 1e3) return sign + sym + (abs / 1e3).toFixed(0) + 'k';
+        return sign + sym + abs.toFixed(0);
+      }}
+      const locale = (currencyCode === 'BRL' || currencyCode === 'EUR') ? 'pt-BR' : 'en-US';
+      return sym + Number(val).toLocaleString(locale, {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }});
+    }}
+  </script>
   <style>{}</style>
 </head>
 <body class="{}">
@@ -312,6 +333,7 @@ struct CanvasChartSpec {
     title: String,
     subtitle: String,
     colors: Option<Vec<String>>,
+    currency: Option<String>,
 }
 
 fn is_radial_chart(chart_type: &str) -> bool {
@@ -340,6 +362,7 @@ fn layout_charts_for_page(
             slot_class,
             theme,
             spec.colors.as_deref(),
+            spec.currency.as_deref(),
         )
     };
 
@@ -395,6 +418,7 @@ fn collect_spec_items(
     items: &[serde_json::Value],
     datasets: &HashMap<String, Vec<serde_json::Value>>,
     default_dataset: &str,
+    default_currency: Option<&str>,
 ) -> (Vec<String>, Vec<CanvasChartSpec>) {
     let mut kpis = Vec::new();
     let mut charts = Vec::new();
@@ -428,7 +452,11 @@ fn collect_spec_items(
                 .map(String::from)
                 .unwrap_or_else(|| humanize_identifier(metric));
             let sum = sum_numeric_column(rows, metric);
-            let formatted = format_report_value(&serde_json::json!(sum), metric);
+            let format_hint = cfg.get("currency")
+                .or_else(|| cfg.get("format"))
+                .and_then(|v| v.as_str())
+                .or_else(|| if is_money_col(metric) { default_currency } else { None });
+            let formatted = format_report_value_with_hint(&serde_json::json!(sum), metric, format_hint);
             let icon = cfg.get("icon").and_then(|v| v.as_str()).unwrap_or("lucide:trending-up");
             let icon_name = if icon.contains(':') { icon.to_string() } else { format!("lucide:{}", icon) };
             kpis.push(render_kpi_card(&label, &formatted, "", &icon_name, "#10b981", 3));
@@ -473,6 +501,12 @@ fn collect_spec_items(
             .and_then(|v| v.as_array())
             .map(|arr| arr.iter().filter_map(|c| c.as_str().map(String::from)).collect())
             .filter(|v: &Vec<String>| !v.is_empty());
+        let currency = cfg.get("currency")
+            .or_else(|| cfg.get("format"))
+            .and_then(|v| v.as_str())
+            .and_then(normalize_currency)
+            .or_else(|| default_currency.and_then(normalize_currency))
+            .map(String::from);
 
         charts.push(CanvasChartSpec {
             dataset: ds_name.to_string(),
@@ -482,6 +516,7 @@ fn collect_spec_items(
             title,
             subtitle,
             colors,
+            currency,
         });
     }
 
@@ -534,8 +569,13 @@ fn build_overview_pages(
         return vec![("Executive Overview".to_string(), "<div class='p-8 text-center text-neutral-400'>No records returned.</div>".to_string())];
     }
 
+    let default_currency = visual_suggestions
+        .and_then(|v| v.get("currency"))
+        .and_then(|v| v.as_str())
+        .and_then(normalize_currency);
+
     if let Some(items) = parse_layout_items(visual_suggestions) {
-        let (kpis, charts) = collect_spec_items(items, datasets, primary_dataset_name);
+        let (kpis, charts) = collect_spec_items(items, datasets, primary_dataset_name, default_currency);
         if !kpis.is_empty() || !charts.is_empty() {
             return paginate_charts_into_tabs(&kpis, &charts, datasets, primary_dataset_name, theme);
         }
@@ -559,7 +599,8 @@ fn build_overview_pages(
         let color = colors[idx % colors.len()];
         let icons = ["lucide:trending-up", "lucide:dollar-sign", "lucide:activity", "lucide:hash"];
         let icon = icons[idx % icons.len()];
-        let formatted = format_report_value(&serde_json::json!(sum), col);
+        let kpi_hint = if is_money_col(col) { default_currency } else { None };
+        let formatted = format_report_value_with_hint(&serde_json::json!(sum), col, kpi_hint);
 
         kpis_html.push(render_kpi_card(
             &humanize_identifier(col),
@@ -572,6 +613,7 @@ fn build_overview_pages(
     }
 
     let mut charts: Vec<CanvasChartSpec> = Vec::new();
+    let auto_currency = default_currency.map(String::from);
     if !numeric_cols.is_empty() {
         let primary_metric = &numeric_cols[0];
         let override_spec = extract_chart_override(visual_suggestions);
@@ -587,6 +629,7 @@ fn build_overview_pages(
                 title: override_spec.title.unwrap_or_else(|| format!("{} Trend", humanize_identifier(primary_metric))),
                 subtitle: override_spec.subtitle.unwrap_or_else(|| "Time-series progression".to_string()),
                 colors: None,
+                currency: auto_currency.clone(),
             });
 
             if let Some(cat_col) = text_cols.first() {
@@ -598,6 +641,7 @@ fn build_overview_pages(
                     title: "Proportional Share".to_string(),
                     subtitle: "Relative contribution ratio (Top 6)".to_string(),
                     colors: None,
+                    currency: auto_currency.clone(),
                 });
             }
         } else if let Some(label_col) = text_cols.first().or_else(|| columns.first()) {
@@ -610,6 +654,7 @@ fn build_overview_pages(
                 title: override_spec.title.unwrap_or_else(|| format!("{} Breakdown", humanize_identifier(primary_metric))),
                 subtitle: override_spec.subtitle.unwrap_or_else(|| "Ranked distribution across primary dimensions".to_string()),
                 colors: None,
+                currency: auto_currency.clone(),
             });
 
             if numeric_cols.len() >= 2 {
@@ -622,6 +667,7 @@ fn build_overview_pages(
                     title: format!("{} vs {}", humanize_identifier(&comp_metrics[0]), humanize_identifier(&comp_metrics[1])),
                     subtitle: "Multi-metric comparative view".to_string(),
                     colors: None,
+                    currency: auto_currency.clone(),
                 });
             }
 
@@ -633,6 +679,7 @@ fn build_overview_pages(
                 title: "Proportional Share".to_string(),
                 subtitle: "Relative contribution ratio (Top 6)".to_string(),
                 colors: None,
+                currency: auto_currency.clone(),
             });
         }
     }
@@ -653,6 +700,7 @@ fn build_overview_pages(
                     title: format!("{}: {}", humanize_identifier(ds_name), humanize_identifier(metric)),
                     subtitle: "Secondary dataset overview".to_string(),
                     colors: None,
+                    currency: auto_currency.clone(),
                 });
             }
         }
@@ -716,6 +764,7 @@ fn render_chart(
     slot_class: &str,
     theme: &str,
     custom_colors: Option<&[String]>,
+    currency: Option<&str>,
 ) -> String {
     let chart_id = format!("chart_{}", uuid::Uuid::new_v4().to_string().replace('-', "")[0..8].to_string());
     let primary_col = value_cols.first().map(|s| s.as_str()).unwrap_or("value");
@@ -749,13 +798,16 @@ fn render_chart(
     } else if chart_type == "bar" && raw_labels.len() > 8 && value_cols.len() == 1 {
         let raw_vals = extract_numeric_series(rows, primary_col);
         let (bar_labels, bar_values) = aggregate_top_n_pie(raw_labels, raw_vals, 8);
-        let rotate_angle = if !is_horizontal && bar_labels.len() > 6 { -30 } else { 0 };
+        let rotate_angle = if !is_horizontal && bar_labels.len() > 6 { -25 } else { 0 };
         let xaxis = serde_json::json!({
             "categories": bar_labels,
             "axisBorder": { "show": false },
             "axisTicks": { "show": false },
             "labels": {
                 "trim": true,
+                "maxHeight": 38,
+                "offsetY": -2,
+                "hideOverlappingLabels": true,
                 "rotate": rotate_angle,
                 "style": { "colors": axis_color, "fontSize": "11px" }
             }
@@ -787,13 +839,16 @@ fn render_chart(
                 }
             })
             .collect();
-        let rotate_angle = if !is_horizontal && capped_labels.len() > 6 { -30 } else { 0 };
+        let rotate_angle = if !is_horizontal && capped_labels.len() > 6 { -25 } else { 0 };
         let xaxis = serde_json::json!({
             "categories": capped_labels,
             "axisBorder": { "show": false },
             "axisTicks": { "show": false },
             "labels": {
                 "trim": true,
+                "maxHeight": 38,
+                "offsetY": -2,
+                "hideOverlappingLabels": true,
                 "rotate": rotate_angle,
                 "style": { "colors": axis_color, "fontSize": "11px" }
             }
@@ -824,33 +879,57 @@ fn render_chart(
     } else {
         serde_json::json!({ "curve": "smooth", "width": 2 })
     };
-    let yaxis_json = if is_combo && value_cols.len() >= 2 {
-        serde_json::json!([
-            {
-                "title": { "text": humanize_identifier(&value_cols[0]), "style": { "color": axis_color, "fontSize": "10px" } },
-                "labels": { "style": { "colors": axis_color, "fontSize": "10px" } }
-            },
-            {
-                "opposite": true,
-                "title": { "text": humanize_identifier(&value_cols[1]), "style": { "color": axis_color, "fontSize": "10px" } },
-                "labels": { "style": { "colors": axis_color, "fontSize": "10px" } }
-            }
-        ])
+    let resolved_currency = currency
+        .and_then(normalize_currency)
+        .or_else(|| if is_money_col(primary_col) { Some("USD") } else { None })
+        .unwrap_or("");
+    let secondary_currency = if is_combo && value_cols.len() >= 2 && is_money_col(&value_cols[1]) {
+        currency.and_then(normalize_currency).unwrap_or("USD")
     } else {
-        serde_json::json!({
-            "labels": { "style": { "colors": axis_color, "fontSize": "10px" } }
-        })
+        ""
     };
-
+    let show_legend = is_pie || value_cols.len() > 1;
     let card_classes = if slot_class.is_empty() {
         "bento-card".to_string()
     } else {
         format!("bento-card {}", slot_class)
     };
 
+    let yaxis_js = if is_combo && value_cols.len() >= 2 {
+        format!(
+            r#"[
+        {{
+          title: {{ text: {:?}, style: {{ color: '{}', fontSize: '10px' }} }},
+          labels: {{ style: {{ colors: '{}', fontSize: '10px' }}, formatter: function(v) {{ return fmtDashboardVal(v, '{}', true); }} }}
+        }},
+        {{
+          opposite: true,
+          title: {{ text: {:?}, style: {{ color: '{}', fontSize: '10px' }} }},
+          labels: {{ style: {{ colors: '{}', fontSize: '10px' }}, formatter: function(v) {{ return fmtDashboardVal(v, '{}', true); }} }}
+        }}
+      ]"#,
+            humanize_identifier(&value_cols[0]),
+            axis_color,
+            axis_color,
+            resolved_currency,
+            humanize_identifier(&value_cols[1]),
+            axis_color,
+            axis_color,
+            secondary_currency
+        )
+    } else {
+        format!(
+            r#"{{
+        labels: {{ style: {{ colors: '{}', fontSize: '10px' }}, formatter: function(v) {{ return fmtDashboardVal(v, '{}', true); }} }}
+      }}"#,
+            axis_color,
+            resolved_currency
+        )
+    };
+
     format!(
         r#"<div class="{}">
-  <div class="flex items-center justify-between mb-2 shrink-0">
+  <div class="flex items-center justify-between mb-1.5 shrink-0">
     <div class="min-w-0">
       <h3 class="text-sm font-semibold text-neutral-200 tracking-tight font-sans truncate">{}</h3>
       <p class="text-[11px] text-neutral-400 font-mono truncate">{}</p>
@@ -859,7 +938,7 @@ fn render_chart(
       <iconify-icon icon="lucide:bar-chart-2"></iconify-icon>
     </div>
   </div>
-  <div id="{}" class="chart-container"></div>
+  <div class="chart-container"><div id="{}" class="chart-mount"></div></div>
   <script>
     new ApexCharts(document.getElementById('{}'), {{
       chart: {{
@@ -880,21 +959,27 @@ fn render_chart(
       labels: {:?},
       xaxis: {},
       yaxis: {},
+      tooltip: {{
+        y: {{ formatter: function(v) {{ return fmtDashboardVal(v, '{}', false); }} }}
+      }},
       fill: {},
       dataLabels: {{ enabled: false }},
       stroke: {},
       legend: {{
+        show: {},
         position: 'bottom',
         fontSize: '11px',
+        itemMargin: {{ horizontal: 6, vertical: 2 }},
         labels: {{ colors: '{}' }}
       }},
       plotOptions: {{
         bar: {{ horizontal: {}, borderRadius: 6, columnWidth: '48%', barHeight: '65%' }},
-        pie: {{ donut: {{ size: '68%' }} }}
+        pie: {{ donut: {{ size: '62%' }} }}
       }},
       grid: {{
         borderColor: '{}',
-        strokeDashArray: 4
+        strokeDashArray: 4,
+        padding: {{ top: 4, right: 8, bottom: 4, left: 8 }}
       }},
       responsive: [{{
         breakpoint: 1023,
@@ -918,9 +1003,11 @@ fn render_chart(
         series_json,
         labels,
         xaxis_json,
-        yaxis_json,
+        yaxis_js,
+        resolved_currency,
         fill_json,
         stroke_json,
+        show_legend,
         axis_color,
         is_horizontal,
         if is_dark { "#1e222e" } else { "#e2e8f0" }
@@ -1072,9 +1159,11 @@ mod tests {
             ],
         );
         let spec = serde_json::json!({
+            "currency": "BRL",
             "layout": [
-                { "type": "kpi", "dataset": "trend", "metric": "revenue", "label": "Revenue" },
-                { "type": "kpi", "dataset": "trend", "metric": "orders", "label": "Orders" },
+                { "type": "kpi", "dataset": "trend", "metric": "revenue", "label": "Revenue BRL", "currency": "BRL" },
+                { "type": "kpi", "dataset": "trend", "metric": "revenue", "label": "Revenue USD", "currency": "USD" },
+                { "type": "kpi", "dataset": "trend", "metric": "revenue", "label": "Revenue EUR", "currency": "EUR" },
                 { "type": "chart", "dataset": "trend", "chartType": "combo", "x": "month", "y": ["revenue", "orders"], "title": "Combo View" },
                 { "type": "chart", "dataset": "trend", "chartType": "area", "x": "month", "y": "revenue", "title": "Area View" },
                 { "type": "chart", "dataset": "trend", "chartType": "donut", "x": "month", "y": "revenue", "title": "Donut View" },
@@ -1083,6 +1172,10 @@ mod tests {
         });
 
         let html = generate_multi_dashboard(&datasets, "Multi-Chart Spec", "dark", Some(&spec));
+        assert!(html.contains("R$ 2.500,00"));
+        assert!(html.contains("$ 2,500.00"));
+        assert!(html.contains("€ 2.500,00"));
+        assert!(html.contains("class=\"chart-mount\""));
         assert!(html.contains("Combo View"));
         assert!(html.contains("Area View"));
         assert!(html.contains("Donut View"));
@@ -1090,7 +1183,7 @@ mod tests {
         assert!(html.contains("Analytics Page 2"));
         assert!(html.contains("Page 2 Line"));
         assert!(html.contains("\"type\":\"column\""));
-        assert!(html.contains("\"opposite\":true"));
+        assert!(html.contains("opposite: true"));
         assert!(html.contains("toggleTheme()"));
     }
 }

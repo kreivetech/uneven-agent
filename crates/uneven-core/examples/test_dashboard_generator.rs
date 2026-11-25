@@ -29,16 +29,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     datasets.insert("by_segment".to_string(), category_rows);
 
     let layout_spec = json!({
+        "currency": "BRL",
         "layout": [
-            { "type": "kpi", "dataset": "monthly_trend", "metric": "revenue", "label": "Total Revenue", "icon": "dollar-sign" },
+            { "type": "kpi", "dataset": "monthly_trend", "metric": "revenue", "label": "Total Revenue (BRL)", "icon": "dollar-sign", "currency": "BRL" },
             { "type": "kpi", "dataset": "monthly_trend", "metric": "orders", "label": "Total Orders", "icon": "shopping-bag" },
-            { "type": "kpi", "dataset": "monthly_trend", "metric": "margin", "label": "Gross Margin", "icon": "trending-up" },
-            { "type": "kpi", "dataset": "by_segment", "metric": "revenue", "label": "Segment Volume", "icon": "layers" },
+            { "type": "kpi", "dataset": "monthly_trend", "metric": "margin", "label": "Gross Margin (USD)", "icon": "trending-up", "currency": "USD" },
+            { "type": "kpi", "dataset": "by_segment", "metric": "revenue", "label": "Segment Volume (EUR)", "icon": "layers", "currency": "EUR" },
             { "type": "kpi", "dataset": "by_segment", "metric": "orders", "label": "Segment Orders", "icon": "activity" },
-            { "type": "chart", "dataset": "by_segment", "chartType": "bar", "x": "category", "y": "revenue", "title": "Revenue by Segment", "subtitle": "Top 8 + Others" },
-            { "type": "chart", "dataset": "monthly_trend", "chartType": "line", "x": "month", "y": "revenue", "title": "Monthly Revenue Trend", "subtitle": "2026 H1 progression" },
-            { "type": "chart", "dataset": "by_segment", "chartType": "donut", "x": "category", "y": "revenue", "title": "Segment Share (Top 6)", "subtitle": "Proportional contribution" },
-            { "type": "chart", "dataset": "monthly_trend", "chartType": "combo", "x": "month", "y": ["revenue", "orders"], "title": "Revenue vs Orders (Dual Y)", "subtitle": "Auto-paginated to Analytics Page 2" }
+            { "type": "chart", "dataset": "by_segment", "chartType": "bar", "x": "category", "y": "revenue", "title": "Revenue by Segment", "subtitle": "Top 8 + Others", "currency": "BRL" },
+            { "type": "chart", "dataset": "monthly_trend", "chartType": "line", "x": "month", "y": "revenue", "title": "Monthly Revenue Trend", "subtitle": "2026 H1 progression", "currency": "BRL" },
+            { "type": "chart", "dataset": "by_segment", "chartType": "donut", "x": "category", "y": "revenue", "title": "Segment Share (Top 6)", "subtitle": "Proportional contribution", "currency": "BRL" },
+            { "type": "chart", "dataset": "monthly_trend", "chartType": "combo", "x": "month", "y": ["revenue", "orders"], "title": "Revenue vs Orders (Dual Y)", "subtitle": "Auto-paginated to Analytics Page 2", "currency": "BRL" }
         ]
     });
 

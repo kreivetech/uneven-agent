@@ -76,7 +76,98 @@ pub fn is_money_col(name: &str) -> bool {
     n.contains("price") || n.contains("total") || n.contains("revenue") || n.contains("salary")
         || n.contains("amount") || n.contains("tax") || n.contains("cost") || n.contains("fee")
         || n.contains("sum") || n.contains("balance") || n.contains("vlr") || n.contains("valor")
-        || n.contains("pagamento")
+        || n.contains("pagamento") || n.contains("receita") || n.contains("faturamento")
+        || n.contains("margin") || n.contains("margem") || n.contains("eur") || n.contains("brl")
+        || n.contains("usd") || n.contains("gbp")
+}
+
+/// Normalizes a currency/format hint into a canonical ISO code (`BRL`, `USD`, `EUR`, `GBP`).
+pub fn normalize_currency(hint: &str) -> Option<&'static str> {
+    let lower = hint.trim().to_lowercase();
+    match lower.as_str() {
+        "brl" | "real" | "reais" | "r$" => Some("BRL"),
+        "usd" | "dollar" | "dolar" | "dólar" | "$" => Some("USD"),
+        "eur" | "euro" | "euros" | "€" => Some("EUR"),
+        "gbp" | "pound" | "libra" | "£" => Some("GBP"),
+        _ => None,
+    }
+}
+
+fn format_grouped_number(n: f64, decimals: usize, thousand_sep: char, decimal_sep: char) -> String {
+    let sign = if n < 0.0 { "-" } else { "" };
+    let abs = n.abs();
+    let fixed = format!("{:.prec$}", abs, prec = decimals);
+    let mut parts = fixed.split('.');
+    let int_part = parts.next().unwrap_or("0");
+    let frac_part = parts.next();
+
+    let mut grouped = String::with_capacity(int_part.len() + int_part.len() / 3);
+    for (idx, ch) in int_part.chars().rev().enumerate() {
+        if idx > 0 && idx % 3 == 0 {
+            grouped.push(thousand_sep);
+        }
+        grouped.push(ch);
+    }
+    let int_formatted: String = grouped.chars().rev().collect();
+
+    match frac_part {
+        Some(frac) if decimals > 0 => format!("{}{}{}{}", sign, int_formatted, decimal_sep, frac),
+        _ => format!("{}{}", sign, int_formatted),
+    }
+}
+
+/// Formats a numeric value according to a canonical currency code (`BRL`, `USD`, `EUR`, `GBP`).
+pub fn format_currency_value(n: f64, currency: &str) -> String {
+    match normalize_currency(currency).unwrap_or("USD") {
+        "BRL" => format!("R$ {}", format_grouped_number(n, 2, '.', ',')),
+        "EUR" => format!("€ {}", format_grouped_number(n, 2, '.', ',')),
+        "GBP" => format!("£ {}", format_grouped_number(n, 2, ',', '.')),
+        _ => format!("$ {}", format_grouped_number(n, 2, ',', '.')),
+    }
+}
+
+/// Formats a value using an explicit format/currency hint (`currency`, `BRL`, `USD`, `EUR`, `GBP`, `percent`, `integer`).
+pub fn format_report_value_with_hint(
+    v: &serde_json::Value,
+    col: &str,
+    format_hint: Option<&str>,
+) -> String {
+    if v.is_null() {
+        return "-".to_string();
+    }
+
+    let num_val = if v.is_number() {
+        v.as_f64()
+    } else if v.is_string() {
+        v.as_str().and_then(|s| s.parse::<f64>().ok())
+    } else {
+        None
+    };
+
+    if let Some(n) = num_val {
+        if let Some(hint) = format_hint {
+            let lower = hint.trim().to_lowercase();
+            if let Some(code) = normalize_currency(&lower) {
+                return format_currency_value(n, code);
+            }
+            if lower == "percent" || lower == "%" {
+                return format!("{:.1}%", n);
+            }
+            if lower == "integer" || lower == "int" {
+                return format_grouped_number(n.round(), 0, ',', '.');
+            }
+            if lower == "currency" {
+                return format_report_value(v, col);
+            }
+        }
+        return format_report_value(v, col);
+    }
+
+    if v.is_boolean() {
+        return v.as_bool().unwrap_or(false).to_string();
+    }
+
+    v.as_str().unwrap_or(&v.to_string()).to_string()
 }
 
 /// Formats a generic JSON value for display in reports, tables, and KPIs with localized currency & precision
@@ -95,13 +186,24 @@ pub fn format_report_value(v: &serde_json::Value, col: &str) -> String {
 
     if let Some(n) = num_val {
         if is_money_col(col) {
-            let is_brl = col.to_lowercase().contains("vlr")
-                || col.to_lowercase().contains("valor")
-                || col.to_lowercase().contains("real")
-                || col.to_lowercase().contains("brl")
-                || col.to_lowercase().contains("pagamento");
-            let symbol = if is_brl { "R$" } else { "$" };
-            return format!("{} {:.2}", symbol, n);
+            let lower = col.to_lowercase();
+            let currency = if lower.contains("eur") || lower.contains("euro") {
+                "EUR"
+            } else if lower.contains("gbp") || lower.contains("libra") {
+                "GBP"
+            } else if lower.contains("vlr")
+                || lower.contains("valor")
+                || lower.contains("real")
+                || lower.contains("brl")
+                || lower.contains("pagamento")
+                || lower.contains("receita")
+                || lower.contains("margem")
+            {
+                "BRL"
+            } else {
+                "USD"
+            };
+            return format_currency_value(n, currency);
         }
         if n.fract() == 0.0 && n.abs() < 1e15 {
             return format!("{}", n as i64);
@@ -110,7 +212,7 @@ pub fn format_report_value(v: &serde_json::Value, col: &str) -> String {
     }
 
     if v.is_boolean() {
-        return v.as_bool().unwrap().to_string();
+        return v.as_bool().unwrap_or(false).to_string();
     }
 
     v.as_str().unwrap_or(&v.to_string()).to_string()
@@ -141,7 +243,9 @@ mod tests {
 
     #[test]
     fn test_format_report_value() {
-        assert_eq!(format_report_value(&serde_json::json!(450000.5), "revenue"), "$ 450000.50");
+        assert_eq!(format_report_value(&serde_json::json!(450000.5), "revenue"), "$ 450,000.50");
+        assert_eq!(format_report_value_with_hint(&serde_json::json!(450000.5), "revenue", Some("BRL")), "R$ 450.000,50");
+        assert_eq!(format_report_value_with_hint(&serde_json::json!(450000.5), "revenue", Some("EUR")), "€ 450.000,50");
         assert_eq!(format_report_value(&serde_json::json!(1240.0), "orders"), "1240");
         assert_eq!(format_report_value(&serde_json::Value::Null, "status"), "-");
     }
