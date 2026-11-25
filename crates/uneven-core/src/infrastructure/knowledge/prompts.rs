@@ -50,20 +50,18 @@ pub fn build_sql_gen_prompt(
              dataset: dataset_main\n\
              metric: total_amount\n\
              label: \"Total Value\"\n\
-             format: currency\n\
-             span: 4\n\
+             currency: BRL\n\
            - type: chart\n\
              dataset: dataset_main\n\
              chartType: bar\n\
              title: \"Performance Ranking\"\n\
              x: category\n\
              y: total_amount\n\
-             span: 8\n\
            - type: table\n\
              dataset: dataset_main\n\
              title: \"Detailed Records\"\n\
-             span: 12\n\
-         ```",
+         ```\n\
+         Supported chartType values: bar, line, area, combo (2 series in y), donut, pie. Optional currency: BRL, USD, EUR, GBP. Do NOT specify width, height, or span — the layout engine sizes and paginates components automatically (up to 5 KPIs and 3 charts per tab).",
         db_type.unwrap_or("SQL"),
         schema_text,
         user_request,
@@ -79,12 +77,12 @@ pub fn build_style_extraction_prompt(user_style_prompt: &str, columns: &[String]
          STRICT OUTPUT FORMAT:\n\
          You MUST format your response as follows. Do NOT write any conversational text.\n\n\
          VISUAL:\n\
-         title=<Report Title> | theme=<dark|light> | layout=[{{ \"type\": \"card\", \"config\": {{ \"title\": \"Total Users\", \"metricCol\": \"count\", \"icon\": \"users\", \"colSpan\": 3 }} }}, {{ \"type\": \"chart\", \"config\": {{ \"chartType\": \"bar\", \"title\": \"Salaries by Dept\", \"labelCol\": \"dept_name\", \"valueCols\": [\"total_salary\"], \"colSpan\": 9, \"height\": 300 }} }}] | colors=<#primary,#accent,#bg,#text>\n\n\
+         title=<Report Title> | theme=<dark|light> | layout=[{{ \"type\": \"card\", \"config\": {{ \"title\": \"Total Users\", \"metricCol\": \"count\", \"icon\": \"users\" }} }}, {{ \"type\": \"chart\", \"config\": {{ \"chartType\": \"bar\", \"title\": \"Salaries by Dept\", \"labelCol\": \"dept_name\", \"valueCols\": [\"total_salary\"], \"currency\": \"BRL\" }} }}] | colors=<#primary,#accent,#bg,#text>\n\n\
          - ALWAYS use the exact column names from the Available Data Columns list in \"metricCol\", \"labelCol\", and \"valueCols\".\n\
+         - Supported chartType values: \"bar\", \"line\", \"area\", \"combo\" (2 metrics in valueCols), \"donut\", \"pie\".\n\
+         - CURRENCY RULE: Optional \"currency\" in config accepts \"BRL\", \"USD\", \"EUR\", or \"GBP\" when monetary formatting is needed.\n\
          - COLOR RULE: Translate user style requests into a list of hex codes. The order MUST be: [primary, accent, background, text]. If the user doesn't specify background/text, provide only [primary, accent]. These colors define the GLOBAL theme via CSS variables.\n\
-         - CHART RULE: Prioritize user-requested components (e.g. \"2 cards, 1 bars\").\n\
-         - Standard Executive Window: 12 columns width. Use \"colSpan\" (1-12) to balance the grid.\n\
-         - Bento Grid aesthetic: Mix small cards (colSpan 3, height 120), charts (colSpan 6-9, height 300), and tables (type: \"table\", colSpan 12).",
+         - CHART RULE: Choose the best chart types for the user's request; do NOT specify width, height, or colSpan — the layout engine automatically fits up to 5 KPI cards and 3 charts per tab in a fixed 100vh viewport and paginates extra charts into additional tabs.",
         user_style_prompt,
         columns.join(", ")
     ).trim().to_string()
