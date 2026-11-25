@@ -87,8 +87,8 @@ code, pre, .font-mono {
 .col-4  { grid-column: span 4 / span 12; }
 .col-3  { grid-column: span 3 / span 12; }
 
-@media (max-width: 1280px) {
-  .col-8, .col-7, .col-5, .col-4 { grid-column: span 6 / span 12; }
+@media (max-width: 1120px) {
+  .col-8, .col-7, .col-6, .col-5, .col-4 { grid-column: span 12 / span 12; }
 }
 
 @media (max-width: 768px) {
@@ -106,6 +106,15 @@ code, pre, .font-mono {
   transition: border-color 0.2s, background-color 0.2s;
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.chart-container {
+  width: 100%;
+  flex: 1;
+  min-width: 0;
+  position: relative;
 }
 
 .bento-card:hover {
@@ -116,5 +125,6 @@ code, pre, .font-mono {
 @media print {
   body { background: #fff !important; color: #000 !important; background-image: none !important; }
   .no-print { display: none !important; }
-  .bento-card { border: 1px solid #e5e7eb !important; box-shadow: none !important; break-inside: avoid; }
+  .bento-card { border: 1px solid #e5e7eb !important; box-shadow: none !important; break-inside: avoid; page-break-inside: avoid; }
+  .chart-container, .apexcharts-canvas { break-inside: avoid; page-break-inside: avoid; max-width: 100% !important; }
 }

@@ -72,7 +72,7 @@ pub enum DashboardComponentSpec {
 
 fn default_kpi_span() -> i64 { 3 }
 fn default_chart_span() -> i64 { 6 }
-fn default_chart_height() -> i64 { 240 }
+fn default_chart_height() -> i64 { 360 }
 fn default_table_span() -> i64 { 12 }
 fn default_pagination() -> usize { 10 }
 fn default_chart_type() -> String { "bar".to_string() }
