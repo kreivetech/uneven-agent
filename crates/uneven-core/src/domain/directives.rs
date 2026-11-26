@@ -8,13 +8,31 @@ You may emit ONE or MORE of the following triggers in any stage when needed; res
 - `[NEED_DIR: group_id]` or `[NEED_DIR: group_id | page]` — Expand the paginated file list of a directory group from the workspace files map.
 - `[WEB_SEARCH: query]` — Search external library docs, API references, or error messages on the web.
 - `[WEB_URL: url]` — Fetch full documentation content from an `http(s)://` web page.
-- `[USE_SKILL: skill_name]` — Dynamically load **internal built-in** system guidelines only (e.g. `[USE_SKILL: explain]`, `[USE_SKILL: docs]`, `[USE_SKILL: zeroday]`). To read user/workspace skills (e.g. `.uneven/skills/*` or `.agents/skills/*`), use `[NEED_FILE: relative/path/to/file]` instead.
+- `[USE_SKILL: skill_name]` — Dynamically load specialized operational guidelines for any skill listed under Available Skills below.
 - `[EXEC_CMD: <single-line command>]` — Request execution of a single-line terminal command (no `]` inside the command). Requires user approval; when approved, its exit code and output are returned to context before the next step (or listed as final commands in synthesis).
 - `[CREATE_POD: <Pod Title> | <Prime Specialist Role> | <Instructions> | <file1>, <file2>]` — Autonomously instantiate a domain-specialized Agent Pod when you identify an architectural subsystem that warrants isolated focus, specialized law, and domain boundaries (users cannot manually create Pods)."#;
 
-/// Appends the fixed `DIRECTIVES_PROTOCOL` to a stage-specific `base_law`.
+/// Appends the fixed `DIRECTIVES_PROTOCOL` and the compact available skills list
+/// to a stage-specific `base_law`.
 pub fn with_directives_protocol(base_law: &str) -> String {
-    format!("{}\n\n{}", base_law.trim_end(), DIRECTIVES_PROTOCOL)
+    let skills_list = crate::domain::skills::list_available_skills()
+        .into_iter()
+        .map(|(name, desc)| {
+            if desc.is_empty() {
+                format!("- `{}`", name)
+            } else {
+                format!("- `{}`: {}", name, desc)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        "{}\n\n{}\n\n### Available Skills for `[USE_SKILL: skill_name]`\n{}",
+        base_law.trim_end(),
+        DIRECTIVES_PROTOCOL,
+        skills_list
+    )
 }
 
 /// Unified inline directives emitted by AI agents across `think`, `ask`, and audit pipelines.
@@ -224,14 +242,14 @@ pub fn strip_directives(text: &str) -> String {
     out
 }
 
-/// Resolves operational instructions for a hardcoded built-in system skill
+/// Resolves operational instructions for `zeroday` or a global system skill bundle
 /// requested via `AgentDirective::UseSkill`.
-pub fn resolve_builtin_skill(name: &str) -> Option<&'static str> {
+pub fn resolve_skill(name: &str) -> Option<String> {
     let clean = clean_payload(name).to_lowercase();
     if !validate_non_empty(&clean) {
         return None;
     }
-    crate::domain::skills::get_builtin_skill(&clean)
+    crate::domain::skills::load_skill_bundle(&clean)
 }
 
 #[cfg(test)]
@@ -287,16 +305,21 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_builtin_skill() {
-        let explain = resolve_builtin_skill("explain").unwrap();
-        assert!(explain.contains("Architecture & Code Explanation"));
-
-        let docs = resolve_builtin_skill("docs").unwrap();
-        assert!(docs.contains("Polyglot Documentation"));
-
-        let zeroday = resolve_builtin_skill("zeroday").unwrap();
+    fn test_resolve_skill() {
+        let zeroday = resolve_skill("zeroday").unwrap();
         assert!(zeroday.contains("Zero-Day Vulnerability"));
 
-        assert!(resolve_builtin_skill("nonexistent").is_none());
+        assert!(resolve_skill("explain").is_none());
+        assert!(resolve_skill("docs").is_none());
+        assert!(resolve_skill("../etc/passwd").is_none());
+        assert!(resolve_skill("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_with_directives_protocol_includes_skills() {
+        let out = with_directives_protocol("Base law");
+        assert!(out.contains("Available System Directives"));
+        assert!(out.contains("Available Skills for `[USE_SKILL: skill_name]`"));
+        assert!(out.contains("- `zeroday`:"));
     }
 }

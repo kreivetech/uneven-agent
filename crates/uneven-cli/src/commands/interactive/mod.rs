@@ -101,41 +101,14 @@ pub async fn classify(
 
     // If the brain provider is not local, attempt to classify with the brain
     if config.brain.provider != "local" && !config.brain.provider.is_empty()
-        && let Some((mut intent, message, tokens)) = classify_with_brain(input, history, files_map, config, external_files).await {
+        && let Some((intent, message, tokens)) = classify_with_brain(input, history, files_map, config, external_files).await {
             classify_spinner.finish_and_clear();
-
-            // If the brain did not provide a clear intent or classified as ask, route to think
-            if intent.action == ShellAction::Unknown || intent.action == ShellAction::None || intent.action == ShellAction::Ask {
-                intent.action = ShellAction::Think;
-                intent.task = Some(input.to_string());
-            }
             return (intent, message, tokens);
         }
 
     classify_spinner.finish_and_clear();
 
-    // If no clear intent, fall back to think engine
-    let final_intent = if quick.action == ShellAction::Unknown || quick.action == ShellAction::Ask {
-        ClassifiedIntent {
-            action: ShellAction::Think,
-            task: Some(input.to_string()),
-            confidence: "high".to_string(),
-            file: None,
-            question: None,
-            commit: None,
-            from: None,
-            staged: false,
-            base: None,
-            paths: Vec::new(),
-            report: false,
-            tasks: None,
-        }
-    } else {
-        quick
-    };
-
-    // Return the final intent, an empty message, and 0 tokens
-    (final_intent, String::new(), 0)
+    (quick, String::new(), 0)
 }
 
 
@@ -889,8 +862,40 @@ pub async fn run() -> Result<()> {
                     1
                 }
             }
-            ShellAction::Ask | ShellAction::Think => {
-                let task = intent.task.or(intent.question).unwrap_or_default();
+            ShellAction::Ask => {
+                let question = intent.question.or(intent.task).unwrap_or_else(|| input.clone());
+                if !question.trim().is_empty() {
+                    match uneven_core::application::ask_service::execute_ask_with_options(
+                        &question,
+                        &intent.paths,
+                        &config,
+                        &root,
+                        None,
+                        None,
+                        Some(&mut history),
+                        None,
+                        None,
+                    )
+                    .await
+                    {
+                        Ok(res) => {
+                            let cleaned = uneven_core::infrastructure::utils::markdown_cleaner::clean_markdown_for_display(&res.response);
+                            let formatted = ui::TerminalMarkdownFormatter::format(&cleaned);
+                            println!("\n{}\n", formatted);
+                            uneven_core::application::ContextCompactorService::auto_compact(&mut history);
+                            0
+                        }
+                        Err(e) => {
+                            println!("{}", style(format!("  Failed to answer: {}", crate::errors::sanitize_error_msg(&e.to_string()))).red());
+                            1
+                        }
+                    }
+                } else {
+                    1
+                }
+            }
+            ShellAction::Think | ShellAction::Unknown => {
+                let task = intent.task.or(intent.question).unwrap_or_else(|| input.clone());
                 if !task.is_empty() {
                     match think::run(task, intent.paths, None, None).await {
                         Ok(answer) => {
@@ -1277,16 +1282,6 @@ pub async fn run() -> Result<()> {
                     }
                 }
                 0
-            }
-            ShellAction::Unknown => {
-                println!(
-                    "\n{} {}\n{}{}",
-                    truecolor("  Not sure what you meant. ", 255, 235, 59),
-                    truecolor("I can help with:", 107, 122, 150),
-                    truecolor("  index · scan · watch · explain <file> · docs <file>\n", 107, 122, 150),
-                    truecolor("  questions about your project · log · undo · help · exit\n", 107, 122, 150)
-                );
-                1
             }
         };
 

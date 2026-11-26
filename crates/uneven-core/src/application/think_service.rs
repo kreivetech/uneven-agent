@@ -1,7 +1,7 @@
 use super::context_assembler::ContextAssembler;
 use crate::domain::config::BrainConfig;
 use crate::domain::directives::{
-    parse_directives, resolve_builtin_skill, strip_directives, with_directives_protocol,
+    parse_directives, resolve_skill, strip_directives, with_directives_protocol,
     AgentDirective,
 };
 use crate::domain::files_map::FilesMapIndex;
@@ -241,7 +241,7 @@ pub(crate) async fn absorb_stage_directives(
         match directive {
             AgentDirective::UseSkill(s) => {
                 if state.loaded_skills.insert(s.clone())
-                    && let Some(instructions) = resolve_builtin_skill(&s)
+                    && let Some(instructions) = resolve_skill(&s)
                 {
                     state.skill_guidelines.push_str(&format!(
                         "\n\n---\n## OPERATIONAL GUIDELINES: {}\n{}\n---\n",
@@ -579,7 +579,6 @@ where
     // 5. Context Resolution Loop (Iteratively read workspace files requested via [NEED_FILE])
     let mut loaded_files = HashSet::new();
     let mut file_content_cache = HashMap::new();
-    let mut loaded_skills: HashSet<String> = HashSet::new();
 
     for f in files {
         if let Some(formatted) = read_workspace_file(root, f) {
@@ -603,22 +602,13 @@ where
             }
         }
 
-        let available_skills_summary = crate::domain::skills::list_builtin_skills()
-            .iter()
-            .map(|(name, desc)| format!("- `{}`: {}", name, desc))
-            .collect::<Vec<_>>()
-            .join("\n");
-
         let scout_prompt = format!(
-            "{}\nUser Request: {}\n\nAvailable Specialized Skills:\n{}\n\nIf you need additional workspace files, emit [NEED_FILE: path]. If you need specialized domain guidelines, emit [USE_SKILL: name]. Otherwise output READY.",
-            current_map, task, available_skills_summary
+            "{}\nUser Request: {}\n\nIf you need additional workspace files, emit [NEED_FILE: path]. Otherwise output READY.",
+            current_map, task
         );
 
-        let scout_system = "You are a senior engineer scouting workspace files and specialized skills. Output only [NEED_FILE: path] or [USE_SKILL: name] tags or READY.";
+        let scout_system = "You are a senior engineer scouting workspace files. Output only [NEED_FILE: path] tags or READY.";
         if let Ok(scout_resp) = run_single_turn(&scout_prompt, scout_system, &brain, threads, max_context).await {
-            let needed_skills = crate::domain::skills::parse_use_skill_tags(&scout_resp);
-            loaded_skills.extend(needed_skills);
-
             let needed = parse_need_file_tags(&scout_resp);
             let new_files: HashSet<String> = needed.difference(&loaded_files).cloned().collect();
             if new_files.is_empty() {
@@ -647,18 +637,6 @@ where
         }
     }
 
-    // Assemble operational skill guidelines if any were activated
-    let mut skill_guidelines = String::new();
-    for skill_name in &loaded_skills {
-        if let Some(instructions) = crate::domain::skills::get_builtin_skill(skill_name) {
-            skill_guidelines.push_str(&format!(
-                "\n\n---\n## OPERATIONAL GUIDELINES: {}\n{}\n---\n",
-                skill_name.to_uppercase(),
-                instructions
-            ));
-        }
-    }
-
     let files_index = load_or_build_files_map(root);
     let compact_files_map = files_index.render_compact_index();
     let full_map_context = if compact_files_map.is_empty() {
@@ -683,8 +661,6 @@ where
 
     let mut directive_state = DirectiveState {
         loaded_files,
-        loaded_skills,
-        skill_guidelines,
         ..Default::default()
     };
 

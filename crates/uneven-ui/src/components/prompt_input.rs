@@ -369,7 +369,7 @@ fn submit_prompt(
                     run_think_pipeline = true;
                 }
             }
-            ShellAction::Think | ShellAction::Ask | ShellAction::Explain | ShellAction::Docs => {
+            ShellAction::Think | ShellAction::Explain | ShellAction::Docs | ShellAction::Unknown | ShellAction::None => {
                 run_think_pipeline = true;
             }
             ShellAction::MultiAgents => {

@@ -16,6 +16,10 @@ pub fn global_bin_dir() -> PathBuf {
     global_uneven_dir().join("bin")
 }
 
+pub fn global_config_skills_dir() -> PathBuf {
+    global_uneven_dir().join("config").join("skills")
+}
+
 pub fn binary_root_dir() -> PathBuf {
     if let Ok(exe) = std::env::current_exe()
         && let Some(parent) = exe.parent()

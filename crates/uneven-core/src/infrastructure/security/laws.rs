@@ -590,8 +590,6 @@ Your exclusive purpose in this flow is to assist or analyze the execution logic 
 - If the pipeline is for Azure DevOps, verify if the `azure-pipelines.yml` file is in the project root.
 - If the pipeline file does not exist, create it and provide the corrected file; if it's not possible to create, explain the reason.
 "#;
-pub const CONTEXT_DOCS: &str = crate::domain::skills::SKILL_DOCS;
-pub const CONTEXT_EXPLAIN: &str = crate::domain::skills::SKILL_EXPLAIN;
 pub const AGENT_RULES: &str = r#"
 # Uneven Agent — Integration and Guidelines for External Agents
 
@@ -641,9 +639,6 @@ pub fn get_context(command: &str) -> String {
 
 /// Returns the exact context string for the specified command resolved against `project_root`
 /// (falling back to `std::env::current_dir()` when `None`).
-///
-/// Workspace skills are intentionally decoupled from `"shell"` so the intent classifier
-/// stays compact and focused on routing.
 pub fn get_context_in_root(command: &str, project_root: Option<&std::path::Path>) -> String {
     let base = match command {
         "analyze" => CONTEXT_ANALYZE.to_string(),
@@ -659,14 +654,11 @@ pub fn get_context_in_root(command: &str, project_root: Option<&std::path::Path>
         "pentest" => CONTEXT_PENTEST.to_string(),
         "chat" => CONTEXT_CHAT.to_string(),
         "ci" => CONTEXT_CI.to_string(),
-        "docs" => CONTEXT_DOCS.to_string(),
-        "explain" => CONTEXT_EXPLAIN.to_string(),
         "shell" => CONTEXT_SHELL.to_string(),
         _ => CONTEXT_ASK.to_string(),
     };
 
     let mut custom_rules = String::new();
-    let mut skills_content = String::new();
     let mut custom_persona = None;
 
     let workspace_root = project_root
@@ -694,57 +686,6 @@ pub fn get_context_in_root(command: &str, project_root: Option<&std::path::Path>
         if let Some(ref config) = loaded_config {
             custom_persona = config.persona.clone();
         }
-
-        // Decouple user/workspace skills from the shell intent classifier
-        if command != "shell" {
-            let mut skills_dirs = vec![
-                root.join(".agents").join("skills"),
-                root.join(".uneven").join("skills"),
-            ];
-
-            if let Some(ref config) = loaded_config
-                && let Some(ref custom_skills) = config.skills
-            {
-                let custom_path = std::path::PathBuf::from(custom_skills);
-                if custom_path.is_absolute() {
-                    skills_dirs.push(custom_path);
-                } else {
-                    skills_dirs.push(root.join(custom_path));
-                }
-            }
-
-            for dir in skills_dirs {
-                if dir.exists()
-                    && dir.is_dir()
-                    && let Ok(entries) = std::fs::read_dir(dir)
-                {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
-                            if let Ok(content) = std::fs::read_to_string(&path) {
-                                skills_content.push_str(&format!(
-                                    "\n--- Skill: {} ---\n",
-                                    path.file_stem().unwrap().to_string_lossy()
-                                ));
-                                skills_content.push_str(&content);
-                            }
-                        } else if path.is_dir() {
-                            let skill_md = path.join("SKILL.md");
-                            if skill_md.exists()
-                                && skill_md.is_file()
-                                && let Ok(content) = std::fs::read_to_string(&skill_md)
-                            {
-                                skills_content.push_str(&format!(
-                                    "\n--- Skill: {} ---\n",
-                                    path.file_name().unwrap().to_string_lossy()
-                                ));
-                                skills_content.push_str(&content);
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
 
     let mut final_context = String::new();
@@ -763,11 +704,6 @@ pub fn get_context_in_root(command: &str, project_root: Option<&std::path::Path>
     if !custom_rules.is_empty() {
         final_context.push_str("\n\n=== ADDITIONAL WORKSPACE GUIDELINES ===\n");
         final_context.push_str(&custom_rules);
-    }
-
-    if !skills_content.is_empty() {
-        final_context.push_str("\n\n=== ADDITIONAL WORKSPACE SKILLS ===\n");
-        final_context.push_str(&skills_content);
     }
 
     final_context
@@ -863,73 +799,8 @@ mod tests {
     }
 
     #[test]
-    fn test_get_context_appends_agents_skills() {
-        let _lock = TEST_MUTEX.lock().unwrap();
-        let current_dir = env::current_dir().unwrap();
-        let temp = tempdir().unwrap();
-        env::set_current_dir(temp.path()).unwrap();
-
-        fs::create_dir_all(temp.path().join(".agents/skills/my_skill")).unwrap();
-        fs::write(
-            temp.path().join(".agents/skills/my_skill/SKILL.md"),
-            "SKILL_CONTENT_HERE",
-        )
-        .unwrap();
-
-        let ctx = get_context("ask");
-        assert!(ctx.contains("=== ADDITIONAL WORKSPACE SKILLS ==="));
-        assert!(ctx.contains("SKILL_CONTENT_HERE"));
-
-        env::set_current_dir(current_dir).unwrap();
-    }
-
-    #[test]
-    fn test_get_context_appends_config_skills() {
-        let _lock = TEST_MUTEX.lock().unwrap();
-        let current_dir = env::current_dir().unwrap();
-        let temp = tempdir().unwrap();
-        env::set_current_dir(temp.path()).unwrap();
-
-        // 1. Create a custom skills dir
-        let custom_skills_dir = temp.path().join("my_custom_skills");
-        fs::create_dir_all(custom_skills_dir.join("test_skill")).unwrap();
-        fs::write(
-            custom_skills_dir.join("test_skill/SKILL.md"),
-            "CUSTOM_SKILL_CONTENT",
-        )
-        .unwrap();
-
-        // 2. Create the config in the project cache directory
-        let cache_dir = crate::infrastructure::utils::paths::project_cache_dir(temp.path());
-        fs::create_dir_all(&cache_dir).unwrap();
-
-        let config_json = serde_json::json!({
-            "projectRoot": temp.path().to_string_lossy().to_string(),
-            "brain": {
-                "provider": "local",
-                "model": "test-model"
-            },
-            "skills": custom_skills_dir.to_string_lossy().to_string()
-        });
-        fs::write(
-            cache_dir.join("config.json"),
-            serde_json::to_string_pretty(&config_json).unwrap(),
-        )
-        .unwrap();
-
-        // 3. Call get_context and assert it contains our custom skill content
-        let ctx = get_context("ask");
-        assert!(ctx.contains("=== ADDITIONAL WORKSPACE SKILLS ==="));
-        assert!(ctx.contains("CUSTOM_SKILL_CONTENT"));
-
-        // Clean up the cache directory
-        let _ = fs::remove_dir_all(cache_dir);
-
-        env::set_current_dir(current_dir).unwrap();
-    }
-
-    #[test]
     fn test_get_context_think() {
+        let _lock = TEST_MUTEX.lock().unwrap();
         let draft = get_context("think_draft");
         assert!(draft.contains("Deep Reasoning & Preliminary Architecture Draft"));
         assert!(draft.contains("Zero-Guessing Guard"));
@@ -957,24 +828,5 @@ mod tests {
 
         let default_think = get_context("think");
         assert_eq!(default_think, draft);
-    }
-
-    #[test]
-    fn test_get_context_in_root_decouples_shell_skills() {
-        let temp = tempfile::tempdir().unwrap();
-        fs::create_dir_all(temp.path().join(".uneven/skills")).unwrap();
-        fs::write(
-            temp.path().join(".uneven/skills/custom.md"),
-            "SECRET_WORKSPACE_SKILL_TEXT",
-        )
-        .unwrap();
-
-        let shell_ctx = get_context_in_root("shell", Some(temp.path()));
-        assert!(!shell_ctx.contains("ADDITIONAL WORKSPACE SKILLS"));
-        assert!(!shell_ctx.contains("SECRET_WORKSPACE_SKILL_TEXT"));
-
-        let draft_ctx = get_context_in_root("think_draft", Some(temp.path()));
-        assert!(draft_ctx.contains("ADDITIONAL WORKSPACE SKILLS"));
-        assert!(draft_ctx.contains("SECRET_WORKSPACE_SKILL_TEXT"));
     }
 }

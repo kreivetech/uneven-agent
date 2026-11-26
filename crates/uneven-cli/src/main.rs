@@ -443,6 +443,9 @@ fn is_known_subcommand(cmd: &str) -> bool {
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
 
+    // Ensure default global system skills exist in ~/.uneven/config/skills/
+    let _ = uneven_core::domain::skills::ensure_default_skills();
+
     // Load global environment variables from ~/.uneven/bin/env
     let global_env_path = uneven_core::infrastructure::utils::paths::global_bin_dir().join("env");
     if global_env_path.exists()

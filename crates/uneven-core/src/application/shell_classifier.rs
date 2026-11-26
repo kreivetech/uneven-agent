@@ -612,36 +612,13 @@ pub async fn classify_shell_intent(
 
     if config.brain.provider != "local"
         && !config.brain.provider.is_empty()
-        && let Some((mut intent, message, tokens)) =
+        && let Some((intent, message, tokens)) =
             classify_with_brain(input, history, files_map, config, external_files).await
     {
-        if intent.action == ShellAction::Unknown || intent.action == ShellAction::None || intent.action == ShellAction::Ask {
-            intent.action = ShellAction::Think;
-            intent.task = Some(input.to_string());
-        }
         return (intent, message, tokens);
     }
 
-    let final_intent = if quick.action == ShellAction::Unknown || quick.action == ShellAction::Ask {
-        ClassifiedIntent {
-            action: ShellAction::Think,
-            task: Some(input.to_string()),
-            confidence: "high".to_string(),
-            file: None,
-            question: None,
-            commit: None,
-            from: None,
-            staged: false,
-            base: None,
-            paths: Vec::new(),
-            report: false,
-            tasks: None,
-        }
-    } else {
-        quick
-    };
-
-    (final_intent, String::new(), 0)
+    (quick, String::new(), 0)
 }
 
 #[cfg(test)]

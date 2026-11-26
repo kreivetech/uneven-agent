@@ -49,6 +49,9 @@ fn main() {
     // 1. Initialize process environment from global and project .env locations
     crate::utils::env_manager::init_process_env();
 
+    // Ensure default global system skills exist in ~/.uneven/config/skills/
+    let _ = uneven_core::domain::skills::ensure_default_skills();
+
     use crate::utils::window::desktop_window::{
         create_fullscreen_config, get_monitor_dimensions,
     };
