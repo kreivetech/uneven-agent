@@ -2,6 +2,12 @@
 
 All notable changes to Uneven Agent are documented in this file.
 
+## [v2.6.0] — November 2026
+
+- **Global System Skills & On-Demand `[USE_SKILL]` Bundles** — Embedded the 12 default system skills into `uneven-core` and synced them idempotently on CLI and IDE (`uneven-ui` `v0.2.6`) startup to `~/.uneven/config/skills/`; removed hardcoded `explain`/`docs` skills and workspace `.agents/skills`/`.uneven/skills` prompt dumping in `laws.rs` (retaining `zeroday` as built-in); and exposed the compact skill index through `with_directives_protocol` so `[USE_SKILL: skill_name]` loads `SKILL.md` plus auxiliary reference files on demand with `catfive` and canonical path validation.
+- **Direct `ShellAction::Ask` Routing** — Removed the forced `Ask` to `Think` rewrite in `shell_classifier` and `uneven-cli`, and separated `ShellAction::Ask` from `run_think_pipeline` in `uneven-ui` so `ask` intents route directly to `ask_service`.
+- **Fixed-Viewport BI Reporting & Multi-Currency Dashboards** — Added multi-chart layouts, multi-series support, adaptive chart sizing, 100vh fixed-viewport canvas with 5-KPI strip and 3-chart pagination, anchored chart mount boxes to prevent bottom clipping, multi-currency formatting, and aligned dashboard prompts.
+
 ## [v2.5.1] — November 2026
 
 - **IDE Active Telemetry Ping (`uneven-ui` v0.2.5)** — Added startup `send_telemetry_ping()` alongside the update check in `uneven-ui` so active IDE installations report to edge telemetry.
